@@ -6,22 +6,39 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "init-store": "node scripts/init-store.mjs"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.4",
+    "@heroicons/react": "^2.2.0",
+    "@prisma/client": "^6.9.0",
+    "@shopify/admin-api-client": "^1.1.0",
+    "@shopify/shopify-api": "^11.13.0",
+    "@supabase/supabase-js": "^2.50.0",
+    "@tanstack/react-query": "^5.80.6",
+    "chart.js": "^4.4.9",
+    "clsx": "^2.1.1",
+    "dotenv": "^16.5.0",
+    "next": "15.3.3",
+    "next-auth": "^4.24.11",
+    "prisma": "^6.9.0",
     "react": "^19.0.0",
+    "react-chartjs-2": "^5.3.0",
     "react-dom": "^19.0.0",
-    "next": "15.3.3"
+    "recharts": "^2.15.3"
   },
   "devDependencies": {
-    "typescript": "^5",
-    "@types/node": "^20",
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/forms": "^0.5.10",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20.19.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "15.3.3",
-    "@eslint/eslintrc": "^3"
+    "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
   }
 }

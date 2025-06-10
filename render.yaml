@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: shopify-tools
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false # Will be set manually in Render dashboard
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: SHOPIFY_APP_API_KEY
+        sync: false
+      - key: SHOPIFY_APP_SECRET
+        sync: false
+      - key: SHOPIFY_APP_HOST_NAME
+        sync: false
+    autoDeploy: true
+    healthCheckPath: /api/health 
