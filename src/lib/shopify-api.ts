@@ -1,19 +1,23 @@
 import { LATEST_API_VERSION } from '@shopify/shopify-api';
 
-// Check required environment variables
-const requiredEnvVars = {
-  SHOPIFY_APP_API_KEY: process.env.SHOPIFY_APP_API_KEY,
-  SHOPIFY_APP_SECRET: process.env.SHOPIFY_APP_SECRET,
-};
+function validateEnvironmentVariables() {
+  const requiredEnvVars = {
+    SHOPIFY_APP_API_KEY: process.env.SHOPIFY_APP_API_KEY,
+    SHOPIFY_APP_SECRET: process.env.SHOPIFY_APP_SECRET,
+  };
 
-// Validate environment variables
-Object.entries(requiredEnvVars).forEach(([key, value]) => {
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${key}`);
-  }
-});
+  // Validate environment variables
+  Object.entries(requiredEnvVars).forEach(([key, value]) => {
+    if (!value) {
+      throw new Error(`Missing required environment variable: ${key}`);
+    }
+  });
+}
 
 export async function getProducts(shop: string, accessToken: string, options: { limit?: number } = {}) {
+  // Only check environment variables when the function is actually called
+  validateEnvironmentVariables();
+
   const url = new URL(`https://${shop}/admin/api/${LATEST_API_VERSION}/products.json`);
   
   if (options.limit) {
