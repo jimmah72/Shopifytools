@@ -2,7 +2,8 @@
 
 import React from 'react'
 import { Box, Container, Tab, Tabs } from '@mui/material'
-import { TabPanel, TabContext } from '@mui/lab'
+import TabContext from '@mui/lab/TabContext'
+import TabPanel from '@mui/lab/TabPanel'
 import ShippingRules from '@/components/settings/ShippingRules'
 import PaymentGateways from '@/components/settings/PaymentGateways'
 import CostManagement from '@/components/settings/CostManagement'
