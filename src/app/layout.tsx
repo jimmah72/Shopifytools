@@ -1,6 +1,9 @@
+'use client';
+
 import type { Metadata } from "next";
 import ThemeRegistry from "@/components/ThemeRegistry/ThemeRegistry";
 import DashboardLayout from "@/components/layout/DashboardLayout";
+import { StoreProvider } from "@/contexts/StoreContext";
 import "@/styles/globals.scss";
 
 export const metadata: Metadata = {
@@ -17,7 +20,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ThemeRegistry>
-          <DashboardLayout>{children}</DashboardLayout>
+          <StoreProvider>
+            <DashboardLayout>{children}</DashboardLayout>
+          </StoreProvider>
         </ThemeRegistry>
       </body>
     </html>

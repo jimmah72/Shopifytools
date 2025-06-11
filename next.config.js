@@ -26,6 +26,13 @@ const nextConfig = {
   sassOptions: {
     includePaths: ['./src/styles'],
   },
+  // Disable static page generation for API routes and dynamic pages
+  staticPageGenerationTimeout: 1000,
+  generateStaticParams: async () => {
+    return {
+      dynamicParams: true,
+    };
+  },
 };
 
 module.exports = nextConfig; 
