@@ -158,7 +158,7 @@ export default function ProductDetailsModal({ product, open, onClose }: ProductD
               </Box>
 
               {/* Product Metadata */}
-              {(product.product_type || product.tags?.length > 0) && (
+              {(product.product_type || (product.tags && product.tags.length > 0)) && (
                 <Box>
                   <Typography variant="h6" gutterBottom>Details</Typography>
                   {product.product_type && (
