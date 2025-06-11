@@ -1,6 +1,6 @@
 'use client'
 
-import { SunIcon, MoonIcon } from '@heroicons/react/24/outline'
+import { LightMode as SunIcon, DarkMode as MoonIcon } from '@mui/icons-material'
 import { useTheme } from '@/contexts/ThemeContext'
 
 export default function ThemeToggle() {
@@ -13,9 +13,9 @@ export default function ThemeToggle() {
       aria-label="Toggle dark mode"
     >
       {theme === 'dark' ? (
-        <SunIcon className="h-5 w-5" />
+        <SunIcon sx={{ fontSize: 20 }} />
       ) : (
-        <MoonIcon className="h-5 w-5" />
+        <MoonIcon sx={{ fontSize: 20 }} />
       )}
     </button>
   )

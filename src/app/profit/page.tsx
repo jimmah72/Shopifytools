@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react'
 import Card from '@/components/ui/Card'
 import {
-  CurrencyDollarIcon,
-  ShoppingBagIcon,
-  TagIcon,
-  ChartBarIcon,
-} from '@heroicons/react/24/outline'
+  AttachMoney as CurrencyDollarIcon,
+  ShoppingBag as ShoppingBagIcon,
+  LocalOffer as TagIcon,
+  BarChart as ChartBarIcon,
+} from '@mui/icons-material'
 import { Line } from 'react-chartjs-2'
 import {
   Chart as ChartJS,

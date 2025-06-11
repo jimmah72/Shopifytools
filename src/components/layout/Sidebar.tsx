@@ -1,6 +1,6 @@
 'use client'
 
-import { HomeIcon, ChartBarIcon, ShoppingBagIcon, CurrencyDollarIcon, MegaphoneIcon } from '@heroicons/react/24/outline'
+import { Home as HomeIcon, BarChart as ChartBarIcon, ShoppingBag as ShoppingBagIcon, AttachMoney as CurrencyDollarIcon, Campaign as MegaphoneIcon } from '@mui/icons-material'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
@@ -36,7 +36,7 @@ export default function Sidebar() {
                       'group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold mx-2'
                     )}
                   >
-                    <item.icon className="h-6 w-6 shrink-0" aria-hidden="true" />
+                    <item.icon sx={{ fontSize: 24 }} aria-hidden="true" />
                     {item.name}
                   </Link>
                 </li>

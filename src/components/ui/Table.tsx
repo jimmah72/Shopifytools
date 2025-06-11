@@ -2,12 +2,12 @@
 
 import { useState } from 'react'
 import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  ChevronUpDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-} from '@heroicons/react/24/outline'
+  KeyboardArrowDown as ChevronDownIcon,
+  KeyboardArrowUp as ChevronUpIcon,
+  UnfoldMore as ChevronUpDownIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+} from '@mui/icons-material'
 import clsx from 'clsx'
 
 export interface Column<T> {

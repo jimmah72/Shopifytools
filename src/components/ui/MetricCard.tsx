@@ -1,5 +1,5 @@
 import { ReactNode } from 'react'
-import { ArrowUpIcon, ArrowDownIcon } from '@heroicons/react/24/solid'
+import { ArrowUpward as ArrowUpIcon, ArrowDownward as ArrowDownIcon } from '@mui/icons-material'
 import clsx from 'clsx'
 
 interface MetricCardProps {
@@ -53,10 +53,10 @@ export default function MetricCard({
                 )}
               >
                 {isPositive && (
-                  <ArrowUpIcon className="h-4 w-4 flex-shrink-0 self-center text-green-500" />
+                  <ArrowUpIcon sx={{ fontSize: 16 }} className="flex-shrink-0 self-center text-green-500" />
                 )}
                 {isNegative && (
-                  <ArrowDownIcon className="h-4 w-4 flex-shrink-0 self-center text-red-500" />
+                  <ArrowDownIcon sx={{ fontSize: 16 }} className="flex-shrink-0 self-center text-red-500" />
                 )}
                 <span className="ml-1">
                   {Math.abs(change)}%
