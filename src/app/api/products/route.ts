@@ -22,6 +22,29 @@ export const fetchCache = 'force-no-store';
 export async function GET(request: NextRequest) {
   console.log('Products API - GET request received')
   try {
+    // Check environment variables first
+    console.log('Products API - Checking environment variables')
+    const envVars = {
+      SHOPIFY_APP_API_KEY: process.env.SHOPIFY_APP_API_KEY,
+      SHOPIFY_APP_SECRET: process.env.SHOPIFY_APP_SECRET,
+      SUPABASE_DIRECT_URL: process.env.SUPABASE_DIRECT_URL,
+    };
+
+    const missingVars = Object.entries(envVars)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingVars.length > 0) {
+      console.error('Products API - Missing environment variables:', missingVars)
+      return NextResponse.json(
+        { 
+          error: 'Server configuration error',
+          details: `Missing environment variables: ${missingVars.join(', ')}. Please check your Netlify environment variables.`
+        },
+        { status: 500 }
+      )
+    }
+
     // Get the first store from the database
     console.log('Products API - Fetching store from database')
     const store = await prisma.store.findFirst({
@@ -43,16 +66,6 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50')
     console.log('Products API - Fetching products with limit:', limit)
     
-    // Check environment variables
-    console.log('Products API - Checking environment variables')
-    if (!process.env.SHOPIFY_APP_API_KEY || !process.env.SHOPIFY_APP_SECRET) {
-      console.error('Products API - Missing required environment variables')
-      return NextResponse.json(
-        { error: 'Server configuration error. Please check environment variables.' },
-        { status: 500 }
-      )
-    }
-
     // Fetch products from Shopify
     console.log('Products API - Fetching products from Shopify')
     const products = await getProducts(store.domain, store.accessToken, { limit })
@@ -65,7 +78,10 @@ export async function GET(request: NextRequest) {
     // Check if it's an environment variable error
     if (error instanceof Error && error.message.includes('Missing required environment variable')) {
       return NextResponse.json(
-        { error: 'Server configuration error. Please check environment variables.' },
+        { 
+          error: 'Server configuration error',
+          details: error.message
+        },
         { status: 500 }
       )
     }
@@ -73,13 +89,19 @@ export async function GET(request: NextRequest) {
     // Check if it's a Shopify API error
     if (error instanceof Error && error.message.includes('Shopify API Error')) {
       return NextResponse.json(
-        { error: 'Failed to fetch products from Shopify. Please check your store connection.' },
+        { 
+          error: 'Failed to fetch products from Shopify',
+          details: error.message
+        },
         { status: 500 }
       )
     }
 
     return NextResponse.json(
-      { error: 'Failed to fetch products' },
+      { 
+        error: 'Failed to fetch products',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     )
   }
