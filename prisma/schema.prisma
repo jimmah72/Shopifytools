@@ -17,39 +17,10 @@ model Store {
   orders        Order[]
   products      Product[]
   adSpends      AdSpend[]
-}
-
-model Order {
-  id               String           @id @default(cuid())
-  storeId         String
-  store           Store            @relation(fields: [storeId], references: [id])
-  productId       String
-  product         Product          @relation(fields: [productId], references: [id])
-  quantity        Int
-  price           Float
-  cost            Float
-  adSpend         Float            @default(0)
-  fulfillmentStatus String          @default("UNFULFILLED")
-  status          String           @default("ACTIVE")
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  customer        Customer?        @relation(fields: [customerId], references: [id])
-  customerId      String?
-  orderItems      OrderItem[]
-
-  @@index([productId])
-  @@index([storeId])
-  @@index([customerId])
-}
-
-model Customer {
-  id        String   @id @default(uuid())
-  firstName String
-  lastName  String
-  email     String   @unique
-  orders    Order[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  shippingRules ShippingRule[]
+  paymentGateways PaymentGateway[]
+  fixedCosts    FixedCost[]
+  variableCosts VariableCost[]
 }
 
 model Product {
@@ -61,12 +32,111 @@ model Product {
   description String?
   price       Float
   cost        Float
+  weight      Float?
+  shippingRuleId String?
+  shippingRule ShippingRule? @relation(fields: [shippingRuleId], references: [id])
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+  variants    ProductVariant[]
   orders      Order[]
   orderItems  OrderItem[]
 
   @@index([storeId])
+  @@index([shippingRuleId])
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  title       String
+  sku         String?
+  price       Float
+  cost        Float
+  weight      Float?
+  inventoryQty Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  orders      Order[]
+
+  @@index([productId])
+}
+
+model ShippingRule {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  name        String
+  baseRate    Float
+  perItemRate Float
+  weightRate  Float?
+  products    Product[]
+  orders      Order[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([storeId])
+}
+
+model PaymentGateway {
+  id              String   @id @default(cuid())
+  storeId         String
+  store           Store    @relation(fields: [storeId], references: [id])
+  name            String
+  fixedFee        Float
+  percentageFee   Float
+  externalFee     Float
+  orders          Order[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([storeId])
+}
+
+model Order {
+  id               String           @id @default(cuid())
+  storeId          String
+  store            Store            @relation(fields: [storeId], references: [id])
+  productId        String
+  product          Product          @relation(fields: [productId], references: [id])
+  variantId        String
+  variant          ProductVariant   @relation(fields: [variantId], references: [id])
+  quantity         Int
+  price            Float
+  cost             Float
+  shippingCost     Float
+  shippingRuleId   String
+  shippingRule     ShippingRule    @relation(fields: [shippingRuleId], references: [id])
+  paymentGatewayId String
+  paymentGateway   PaymentGateway  @relation(fields: [paymentGatewayId], references: [id])
+  fixedFee         Float
+  percentageFee    Float
+  externalFee      Float
+  adSpend          Float           @default(0)
+  fulfillmentStatus String         @default("UNFULFILLED")
+  status           String          @default("ACTIVE")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  customer         Customer?       @relation(fields: [customerId], references: [id])
+  customerId       String?
+  orderItems       OrderItem[]
+
+  @@index([productId])
+  @@index([variantId])
+  @@index([storeId])
+  @@index([customerId])
+  @@index([shippingRuleId])
+  @@index([paymentGatewayId])
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  firstName String
+  lastName  String
+  email     String   @unique
+  orders    Order[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model OrderItem {
@@ -85,14 +155,49 @@ model OrderItem {
 }
 
 model AdSpend {
-  id        String   @id @default(uuid())
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id])
-  platform  String
-  amount    Float
-  date      DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  platform    String
+  accountId   String
+  campaignId  String?
+  amount      Float
+  date        DateTime
+  lastSync    DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([storeId])
+  @@index([platform, accountId])
+}
+
+model FixedCost {
+  id          String   @id @default(uuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  name        String
+  amount      Float
+  category    String
+  frequency   String   // Monthly, Yearly, etc.
+  startDate   DateTime
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([storeId])
+}
+
+model VariableCost {
+  id             String   @id @default(uuid())
+  storeId        String
+  store          Store    @relation(fields: [storeId], references: [id])
+  name           String
+  amountPerOrder Float
+  category       String
+  startDate      DateTime
+  endDate        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([storeId])
 } 
