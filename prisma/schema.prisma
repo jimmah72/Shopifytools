@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url = env("SUPABASE_DIRECT_URL")
 }
 
 model Store {
@@ -20,20 +20,26 @@ model Store {
 }
 
 model Order {
-  id        String   @id @default(cuid())
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id])
-  productId String
-  product   Product  @relation(fields: [productId], references: [id])
-  quantity  Int
-  price     Float
-  cost      Float
-  adSpend   Float    @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String           @id @default(cuid())
+  storeId         String
+  store           Store            @relation(fields: [storeId], references: [id])
+  productId       String
+  product         Product          @relation(fields: [productId], references: [id])
+  quantity        Int
+  price           Float
+  cost            Float
+  adSpend         Float            @default(0)
+  fulfillmentStatus String          @default("UNFULFILLED")
+  status          String           @default("ACTIVE")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  customer        Customer?        @relation(fields: [customerId], references: [id])
+  customerId      String?
+  orderItems      OrderItem[]
 
   @@index([productId])
   @@index([storeId])
+  @@index([customerId])
 }
 
 model Customer {
@@ -47,17 +53,18 @@ model Customer {
 }
 
 model Product {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   storeId     String
-  store       Store    @relation(fields: [storeId], references: [id])
+  store       Store       @relation(fields: [storeId], references: [id])
   title       String
-  sku         String?  @unique
+  sku         String?     @unique
   description String?
   price       Float
   cost        Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
   orders      Order[]
+  orderItems  OrderItem[]
 
   @@index([storeId])
 }
@@ -72,6 +79,9 @@ model OrderItem {
   price     Float
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([productId])
 }
 
 model AdSpend {

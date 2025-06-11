@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const installUrl = await generateInstallUrl(shop);
+    const installUrl = await generateInstallUrl(shop, request);
     
     return NextResponse.redirect(installUrl);
   } catch (error) {

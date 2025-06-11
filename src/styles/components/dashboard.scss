@@ -1,0 +1,151 @@
+@import '../theme/typography';
+
+.dashboard {
+  &__title {
+    margin-bottom: 2rem;
+    @include heading-2;
+  }
+
+  &__grid {
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+
+  &__card {
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    background-color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease-in-out;
+
+    &:hover {
+      transform: translateY(-2px);
+    }
+
+    &-title {
+      @include small-text;
+      color: var(--mui-palette-text-secondary);
+      margin-bottom: 0.5rem;
+    }
+
+    &-value {
+      @include heading-3;
+      color: var(--mui-palette-text-primary);
+      margin-bottom: 0.25rem;
+    }
+
+    &-trend {
+      @include xs-text;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+
+      &.positive {
+        color: var(--mui-palette-success-main);
+      }
+
+      &.negative {
+        color: var(--mui-palette-error-main);
+      }
+    }
+  }
+}
+
+.metric-card {
+  background-color: var(--color-surface);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+
+    .icon {
+      width: 1.5rem;
+      height: 1.5rem;
+      color: var(--color-text-secondary);
+    }
+
+    .label {
+      @include small-text;
+    }
+  }
+
+  &__value {
+    font-size: 1.875rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin-bottom: 0.5rem;
+  }
+
+  &__change {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+
+    &--positive {
+      color: var(--color-success);
+    }
+
+    &--negative {
+      color: var(--color-danger);
+    }
+  }
+}
+
+.chart-section {
+  background-color: var(--color-surface);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+  &__header {
+    margin-bottom: 1.5rem;
+
+    h2 {
+      @include heading-2;
+    }
+  }
+}
+
+.orders-section {
+  background-color: var(--color-surface);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+
+  &__header {
+    margin-bottom: 1.5rem;
+
+    h2 {
+      @include heading-2;
+    }
+  }
+
+  &__table {
+    width: 100%;
+    border-collapse: collapse;
+
+    th, td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    th {
+      @include small-text;
+      font-weight: 600;
+    }
+
+    td {
+      @include body-text;
+    }
+  }
+} 

@@ -1,17 +1,27 @@
-import { ReactNode } from 'react'
-import clsx from 'clsx'
+'use client';
+
+import { Paper, Box } from '@mui/material';
 
 interface CardProps {
-  children: React.ReactNode
-  className?: string
+  children: React.ReactNode;
+  className?: string;
 }
 
-export default function Card({ children, className = '' }: CardProps) {
+export default function Card({ children, className }: CardProps) {
   return (
-    <div
-      className={`rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-800 p-6 shadow-sm ${className}`}
+    <Paper 
+      elevation={1} 
+      sx={{ 
+        p: 3,
+        '&:hover': {
+          boxShadow: 2,
+          transform: 'translateY(-2px)',
+        },
+        transition: 'all 0.2s ease-in-out',
+      }}
+      className={className}
     >
-      {children}
-    </div>
-  )
+      <Box>{children}</Box>
+    </Paper>
+  );
 } 

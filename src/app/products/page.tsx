@@ -1,187 +1,195 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import Card from '@/components/ui/Card'
-import Table from '@/components/ui/Table'
-import { formatCurrency } from '@/lib/utils'
+import { useState, useEffect } from 'react';
+import { Box, Grid, Typography, Stack, Pagination, Skeleton } from '@mui/material';
+import ProductCard from '@/components/products/ProductCard';
+import ProductDetailsModal from '@/components/products/ProductDetailsModal';
+import ProductFilters from '@/components/products/ProductFilters';
 
-interface Product {
-  id: string
-  title: string
-  price: number
-  cost: number
-  totalSales: number
-  totalRevenue: number
-  totalProfit: number
-  profitMargin: number
-  adSpend: number
-  netProfit: number
-}
-
-interface Column<T> {
-  header: string
-  accessorKey: keyof T
-  cell?: (item: T) => React.ReactNode
-}
+const ITEMS_PER_PAGE = 12;
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [sortField, setSortField] = useState('totalProfit')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [search, setSearch] = useState('')
+  // State
+  const [products, setProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('title_asc');
+  const [stockFilter, setStockFilter] = useState('all');
 
-  const fetchProducts = async () => {
-    try {
-      setIsLoading(true)
-      const params = new URLSearchParams({
-        sortField,
-        sortOrder,
-        page: page.toString(),
-        search,
-      })
-
-      const response = await fetch(`/api/products?${params}`)
-      const data = await response.json()
-      setProducts(data.products)
-      setTotalPages(data.totalPages)
-    } catch (error) {
-      console.error('Error fetching products:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
+  // Fetch products
   useEffect(() => {
-    fetchProducts()
-  }, [sortField, sortOrder, page, search])
+    async function fetchProducts() {
+      try {
+        setLoading(true);
+        setError(null);
 
-  const columns: Column<Product>[] = [
-    {
-      header: 'Product',
-      accessorKey: 'title',
-    },
-    {
-      header: 'Price',
-      accessorKey: 'price',
-      cell: (product) => formatCurrency(product.price),
-    },
-    {
-      header: 'COGS',
-      accessorKey: 'cost',
-      cell: (product) => formatCurrency(product.cost),
-    },
-    {
-      header: 'Total Sales',
-      accessorKey: 'totalSales',
-    },
-    {
-      header: 'Revenue',
-      accessorKey: 'totalRevenue',
-      cell: (product) => formatCurrency(product.totalRevenue),
-    },
-    {
-      header: 'Ad Spend',
-      accessorKey: 'adSpend',
-      cell: (product) => formatCurrency(product.adSpend),
-    },
-    {
-      header: 'Profit',
-      accessorKey: 'totalProfit',
-      cell: (product) => formatCurrency(product.totalProfit),
-    },
-    {
-      header: 'Net Profit',
-      accessorKey: 'netProfit',
-      cell: (product) => formatCurrency(product.netProfit),
-    },
-    {
-      header: 'Margin',
-      accessorKey: 'profitMargin',
-      cell: (product) => `${product.profitMargin.toFixed(1)}%`,
-    },
-  ]
+        const response = await fetch('/api/products?limit=250');
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to fetch products');
+        }
 
-  const calculateTotal = (key: keyof Product) => {
-    if (isLoading || !products?.length) return 0
-    return products.reduce((sum, product) => sum + (product[key] as number), 0)
+        const data = await response.json();
+        setProducts(data.products);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load products. Please try again later.');
+        console.error('Error fetching products:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchProducts();
+  }, []);
+
+  // Filter and sort products
+  const filteredProducts = products.filter(product => {
+    // Search filter
+    const searchMatch = search === '' || 
+      product.title.toLowerCase().includes(search.toLowerCase()) ||
+      (product.description && product.description.toLowerCase().includes(search.toLowerCase()));
+
+    // Stock filter
+    let stockMatch = true;
+    switch (stockFilter) {
+      case 'in_stock':
+        stockMatch = (product.variants[0]?.inventory_quantity || 0) > 0;
+        break;
+      case 'out_of_stock':
+        stockMatch = (product.variants[0]?.inventory_quantity || 0) === 0;
+        break;
+      case 'low_stock':
+        stockMatch = (product.variants[0]?.inventory_quantity || 0) > 0 && 
+                    (product.variants[0]?.inventory_quantity || 0) < 10;
+        break;
+    }
+
+    return searchMatch && stockMatch;
+  }).sort((a, b) => {
+    switch (sortBy) {
+      case 'title_asc':
+        return a.title.localeCompare(b.title);
+      case 'title_desc':
+        return b.title.localeCompare(a.title);
+      case 'price_asc':
+        return parseFloat(a.variants[0]?.price || '0') - parseFloat(b.variants[0]?.price || '0');
+      case 'price_desc':
+        return parseFloat(b.variants[0]?.price || '0') - parseFloat(a.variants[0]?.price || '0');
+      case 'inventory_asc':
+        return (a.variants[0]?.inventory_quantity || 0) - (b.variants[0]?.inventory_quantity || 0);
+      case 'inventory_desc':
+        return (b.variants[0]?.inventory_quantity || 0) - (a.variants[0]?.inventory_quantity || 0);
+      default:
+        return 0;
+    }
+  });
+
+  // Pagination
+  const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
+  const paginatedProducts = filteredProducts.slice(
+    (page - 1) * ITEMS_PER_PAGE,
+    page * ITEMS_PER_PAGE
+  );
+
+  // Loading state
+  if (loading) {
+    return (
+      <Box sx={{ p: 4 }}>
+        <Stack spacing={3}>
+          <Box>
+            <Typography variant="h4" gutterBottom>Products</Typography>
+            <Typography color="text.secondary" gutterBottom>
+              Manage and track your store's inventory
+            </Typography>
+          </Box>
+
+          <ProductFilters
+            search={search}
+            onSearchChange={setSearch}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            stockFilter={stockFilter}
+            onStockFilterChange={setStockFilter}
+          />
+
+          <Grid container spacing={3}>
+            {[...Array(ITEMS_PER_PAGE)].map((_, index) => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={index}>
+                <Skeleton variant="rectangular" height={300} sx={{ borderRadius: 1 }} />
+              </Grid>
+            ))}
+          </Grid>
+        </Stack>
+      </Box>
+    );
   }
 
-  const analyticsCards = [
-    {
-      title: 'Total Revenue',
-      value: calculateTotal('totalRevenue'),
-      color: 'text-blue-600',
-    },
-    {
-      title: 'Total Profit',
-      value: calculateTotal('totalProfit'),
-      color: 'text-green-600',
-    },
-    {
-      title: 'Net Profit',
-      value: calculateTotal('netProfit'),
-      color: 'text-purple-600',
-    },
-    {
-      title: 'Total Ad Spend',
-      value: calculateTotal('adSpend'),
-      color: 'text-red-600',
-    },
-  ]
+  // Error state
+  if (error) {
+    return (
+      <Box sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>Products</Typography>
+        <Typography color="error">{error}</Typography>
+      </Box>
+    );
+  }
 
   return (
-    <div className="space-y-6 p-6">
-      {/* Search Bar */}
-      <Card>
-        <div className="flex items-center space-x-4">
-          <div className="flex-1">
-            <input
-              type="text"
-              placeholder="Search products..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-        </div>
-      </Card>
+    <Box sx={{ p: 4 }}>
+      <Stack spacing={3}>
+        <Box>
+          <Typography variant="h4" gutterBottom>Products</Typography>
+          <Typography color="text.secondary" gutterBottom>
+            Manage and track your store's inventory
+          </Typography>
+        </Box>
 
-      {/* Product Analytics Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {analyticsCards.map((card) => (
-          <Card key={card.title}>
-            <div className="text-center">
-              <h3 className="text-lg font-medium text-gray-900">{card.title}</h3>
-              <p className={`mt-2 text-3xl font-semibold ${card.color}`}>
-                {isLoading ? (
-                  <span className="text-gray-400">Loading...</span>
-                ) : (
-                  formatCurrency(card.value)
-                )}
-              </p>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* Products Table */}
-      <Card>
-        <Table
-          data={products}
-          columns={columns}
-          isLoading={isLoading}
-          onSort={(field, order) => {
-            setSortField(field as keyof Product)
-            setSortOrder(order)
-          }}
-          currentPage={page}
-          totalPages={totalPages}
-          onPageChange={setPage}
+        <ProductFilters
+          search={search}
+          onSearchChange={setSearch}
+          sortBy={sortBy}
+          onSortChange={setSortBy}
+          stockFilter={stockFilter}
+          onStockFilterChange={setStockFilter}
         />
-      </Card>
-    </div>
-  )
+
+        <Grid container spacing={3}>
+          {paginatedProducts.map((product) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={product.id}>
+              <ProductCard
+                product={product}
+                onClick={() => setSelectedProduct(product)}
+              />
+            </Grid>
+          ))}
+        </Grid>
+
+        {filteredProducts.length > ITEMS_PER_PAGE && (
+          <Stack alignItems="center" sx={{ mt: 4 }}>
+            <Pagination
+              count={totalPages}
+              page={page}
+              onChange={(_, value) => setPage(value)}
+              color="primary"
+            />
+          </Stack>
+        )}
+
+        {filteredProducts.length === 0 && (
+          <Typography color="text.secondary" align="center">
+            No products found matching your criteria.
+          </Typography>
+        )}
+      </Stack>
+
+      <ProductDetailsModal
+        product={selectedProduct}
+        open={!!selectedProduct}
+        onClose={() => setSelectedProduct(null)}
+      />
+    </Box>
+  );
 } 

@@ -1,139 +1,146 @@
 'use client';
 
 import { useState } from 'react';
-import { Tab } from '@headlessui/react';
-import { CogIcon, ShoppingBagIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
-import clsx from 'clsx';
+import { Box, Tabs, Tab, Typography, Paper, Button } from '@mui/material';
+import { Settings as SettingsIcon, ShoppingBag as ShoppingBagIcon, Campaign as CampaignIcon } from '@mui/icons-material';
 import ShopifyConnection from '@/components/settings/ShopifyConnection';
 
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`settings-tabpanel-${index}`}
+      aria-labelledby={`settings-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ py: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
 const tabs = [
-  { name: 'General', icon: CogIcon },
-  { name: 'Shopify', icon: ShoppingBagIcon },
-  { name: 'Ad Platforms', icon: MegaphoneIcon },
+  { name: 'General', icon: <SettingsIcon /> },
+  { name: 'Shopify', icon: <ShoppingBagIcon /> },
+  { name: 'Ad Platforms', icon: <CampaignIcon /> },
 ];
 
 export default function SettingsPage() {
   const [selectedTab, setSelectedTab] = useState(0);
 
+  const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+    setSelectedTab(newValue);
+  };
+
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">Settings</h1>
-          <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-            Manage your store connections and preferences
-          </p>
-        </div>
+    <Box sx={{ maxWidth: 'lg', mx: 'auto', px: 3 }}>
+      <Box sx={{ mb: 6 }}>
+        <Typography variant="h4" gutterBottom>
+          Settings
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          Manage your store connections and preferences
+        </Typography>
+      </Box>
 
-        <Tab.Group selectedIndex={selectedTab} onChange={setSelectedTab}>
-          <Tab.List className="flex space-x-1 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
-            {tabs.map((tab) => (
-              <Tab
-                key={tab.name}
-                className={({ selected }) =>
-                  clsx(
-                    'w-full rounded-lg py-2.5 text-sm font-medium leading-5',
-                    'ring-white/60 ring-offset-2 ring-offset-blue-400 focus:outline-none focus:ring-2',
-                    selected
-                      ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow'
-                      : 'text-gray-600 dark:text-gray-400 hover:bg-white/[0.12] hover:text-blue-600 dark:hover:text-blue-400'
-                  )
-                }
-              >
-                <div className="flex items-center justify-center space-x-2">
-                  <tab.icon className="h-5 w-5" />
-                  <span>{tab.name}</span>
-                </div>
-              </Tab>
-            ))}
-          </Tab.List>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs
+          value={selectedTab}
+          onChange={handleChange}
+          aria-label="settings tabs"
+          variant="fullWidth"
+        >
+          {tabs.map((tab, index) => (
+            <Tab
+              key={tab.name}
+              icon={tab.icon}
+              label={tab.name}
+              id={`settings-tab-${index}`}
+              aria-controls={`settings-tabpanel-${index}`}
+            />
+          ))}
+        </Tabs>
+      </Box>
 
-          <Tab.Panels className="mt-6">
-            {/* General Settings */}
-            <Tab.Panel>
-              <div className="space-y-6">
-                <div className="bg-white dark:bg-gray-800 shadow sm:rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <h3 className="text-base font-semibold leading-6 text-gray-900 dark:text-white">
-                      Account Settings
-                    </h3>
-                    <div className="mt-2 max-w-xl text-sm text-gray-500 dark:text-gray-400">
-                      <p>Manage your account preferences and settings.</p>
-                    </div>
-                    {/* Add account settings form here */}
-                  </div>
-                </div>
-              </div>
-            </Tab.Panel>
+      <TabPanel value={selectedTab} index={0}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Account Settings
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Manage your account preferences and settings.
+          </Typography>
+          {/* Add account settings form here */}
+        </Paper>
+      </TabPanel>
 
-            {/* Shopify Connection */}
-            <Tab.Panel>
-              <div className="space-y-6">
-                <ShopifyConnection />
-              </div>
-            </Tab.Panel>
+      <TabPanel value={selectedTab} index={1}>
+        <ShopifyConnection />
+      </TabPanel>
 
-            {/* Ad Platforms */}
-            <Tab.Panel>
-              <div className="space-y-6">
-                <div className="bg-white dark:bg-gray-800 shadow sm:rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <h3 className="text-base font-semibold leading-6 text-gray-900 dark:text-white">
-                      Ad Platform Connections
-                    </h3>
-                    <div className="mt-2 max-w-xl text-sm text-gray-500 dark:text-gray-400">
-                      <p>Connect your advertising accounts to track ad spend and ROI.</p>
-                    </div>
-                    <div className="mt-6 space-y-4">
-                      {/* Facebook Ads */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-medium text-gray-900 dark:text-white">Facebook Ads</h4>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">Connect your Facebook Ads account</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="rounded-md bg-blue-600 dark:bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 dark:hover:bg-blue-400"
-                        >
-                          Connect
-                        </button>
-                      </div>
+      <TabPanel value={selectedTab} index={2}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Ad Platform Connections
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+            Connect your advertising accounts to track ad spend and ROI.
+          </Typography>
 
-                      {/* Google Ads */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-medium text-gray-900 dark:text-white">Google Ads</h4>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">Connect your Google Ads account</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="rounded-md bg-blue-600 dark:bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 dark:hover:bg-blue-400"
-                        >
-                          Connect
-                        </button>
-                      </div>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {/* Facebook Ads */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box>
+                <Typography variant="subtitle1">Facebook Ads</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Connect your Facebook Ads account
+                </Typography>
+              </Box>
+              <Button variant="contained" color="primary">
+                Connect
+              </Button>
+            </Box>
 
-                      {/* TikTok Ads */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="text-sm font-medium text-gray-900 dark:text-white">TikTok Ads</h4>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">Connect your TikTok Ads account</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="rounded-md bg-blue-600 dark:bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 dark:hover:bg-blue-400"
-                        >
-                          Connect
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Tab.Panel>
-          </Tab.Panels>
-        </Tab.Group>
-      </div>
-    </div>
+            {/* Google Ads */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box>
+                <Typography variant="subtitle1">Google Ads</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Connect your Google Ads account
+                </Typography>
+              </Box>
+              <Button variant="contained" color="primary">
+                Connect
+              </Button>
+            </Box>
+
+            {/* TikTok Ads */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box>
+                <Typography variant="subtitle1">TikTok Ads</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Connect your TikTok Ads account
+                </Typography>
+              </Box>
+              <Button variant="contained" color="primary">
+                Connect
+              </Button>
+            </Box>
+          </Box>
+        </Paper>
+      </TabPanel>
+    </Box>
   );
 } 

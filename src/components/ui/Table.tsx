@@ -26,6 +26,7 @@ export interface TableProps<T> {
   onPageChange?: (page: number) => void
   onRowClick?: (item: T) => void
   isLoading?: boolean
+  totalPages?: number
 }
 
 export default function Table<T>({
@@ -38,6 +39,7 @@ export default function Table<T>({
   onPageChange,
   onRowClick,
   isLoading = false,
+  totalPages: propsTotalPages,
 }: TableProps<T>) {
   const [sortConfig, setSortConfig] = useState<{
     field: keyof T | null
@@ -54,7 +56,7 @@ export default function Table<T>({
     onSort?.(field, order)
   }
 
-  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const totalPagesCount = propsTotalPages || Math.ceil(totalItems / itemsPerPage)
 
   if (isLoading) {
     return (
@@ -128,7 +130,7 @@ export default function Table<T>({
           </table>
           
           {/* Pagination */}
-          {totalPages > 1 && (
+          {totalPagesCount > 1 && (
             <nav className="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3 sm:px-6">
               <div className="flex flex-1 justify-between sm:hidden">
                 <button
@@ -140,7 +142,7 @@ export default function Table<T>({
                 </button>
                 <button
                   onClick={() => onPageChange?.(currentPage + 1)}
-                  disabled={currentPage === totalPages}
+                  disabled={currentPage === totalPagesCount}
                   className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
                 >
                   Next
@@ -171,7 +173,7 @@ export default function Table<T>({
                     </button>
                     <button
                       onClick={() => onPageChange?.(currentPage + 1)}
-                      disabled={currentPage === totalPages}
+                      disabled={currentPage === totalPagesCount}
                       className="relative inline-flex items-center rounded-r-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
                     >
                       <span className="sr-only">Next</span>

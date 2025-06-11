@@ -1,29 +1,24 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import { ThemeProvider } from "@/contexts/ThemeContext";
+import ThemeRegistry from "@/components/ThemeRegistry/ThemeRegistry";
 import DashboardLayout from "@/components/layout/DashboardLayout";
-
-const inter = Inter({ subsets: ["latin"] });
+import "@/styles/globals.scss";
 
 export const metadata: Metadata = {
-  title: "ShopifyTools - Analytics Dashboard",
+  title: "Shopify Analytics",
   description: "Advanced analytics and profit tracking for your Shopify store",
 };
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} bg-white text-gray-900 dark:bg-gray-900 dark:text-white`}>
-        <ThemeProvider>
-          <DashboardLayout>
-            {children}
-          </DashboardLayout>
-        </ThemeProvider>
+    <html lang="en">
+      <body>
+        <ThemeRegistry>
+          <DashboardLayout>{children}</DashboardLayout>
+        </ThemeRegistry>
       </body>
     </html>
   );
