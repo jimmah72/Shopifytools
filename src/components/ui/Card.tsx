@@ -1,13 +1,14 @@
 'use client';
 
-import { Paper, Box } from '@mui/material';
+import { Paper, Box, Typography } from '@mui/material';
 
 interface CardProps {
   children: React.ReactNode;
   className?: string;
+  title?: string;
 }
 
-export default function Card({ children, className }: CardProps) {
+export default function Card({ children, className, title }: CardProps) {
   return (
     <Paper 
       elevation={1} 
@@ -21,6 +22,11 @@ export default function Card({ children, className }: CardProps) {
       }}
       className={className}
     >
+      {title && (
+        <Typography variant="h6" component="h2" sx={{ mb: 2 }}>
+          {title}
+        </Typography>
+      )}
       <Box>{children}</Box>
     </Paper>
   );
