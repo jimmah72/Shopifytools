@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "init-store": "node scripts/init-store.mjs",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js && npx prisma generate"
   },
   "dependencies": {
     "@emotion/react": "^11.11.3",
@@ -32,7 +32,6 @@
     "recharts": "2.10.3"
   },
   "devDependencies": {
-    "@netlify/plugin-nextjs": "4.41.3",
     "@types/node": "20.10.5",
     "@types/react": "18.2.45",
     "@types/react-dom": "18.2.18",
