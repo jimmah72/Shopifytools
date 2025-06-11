@@ -1,9 +1,5 @@
-'use client';
-
 import type { Metadata } from "next";
-import ThemeRegistry from "@/components/ThemeRegistry/ThemeRegistry";
-import DashboardLayout from "@/components/layout/DashboardLayout";
-import { StoreProvider } from "@/contexts/StoreContext";
+import ClientLayout from "@/components/layout/ClientLayout";
 import "@/styles/globals.scss";
 
 export const metadata: Metadata = {
@@ -19,11 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ThemeRegistry>
-          <StoreProvider>
-            <DashboardLayout>{children}</DashboardLayout>
-          </StoreProvider>
-        </ThemeRegistry>
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );
