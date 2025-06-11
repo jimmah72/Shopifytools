@@ -1,9 +1,5 @@
 import { LATEST_API_VERSION } from '@shopify/shopify-api';
 
-if (!process.env.SHOPIFY_STORE_DOMAIN || !process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN) {
-  throw new Error('Missing required Shopify environment variables');
-}
-
 // Helper function to format shop domain
 export const formatShopDomain = (shop: string) => {
   // Remove protocol if present
@@ -25,7 +21,11 @@ export const isValidShopDomain = (shop: string) => {
 
 // Helper function for making REST API calls
 export async function callShopifyApi(shop: string, accessToken: string, endpoint: string, method = 'GET', data?: any) {
-  const url = `https://${shop}/admin/api/${LATEST_API_VERSION}${endpoint}`;
+  const formattedDomain = formatShopDomain(shop);
+  const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}${endpoint}`;
+  
+  console.log('Shopify API - Making request to:', url);
+  
   const options: RequestInit = {
     method,
     headers: {
@@ -41,6 +41,7 @@ export async function callShopifyApi(shop: string, accessToken: string, endpoint
   const response = await fetch(url, options);
 
   if (!response.ok) {
+    console.error('Shopify API - Error response:', response.statusText);
     throw new Error(`Shopify API Error: ${response.statusText}`);
   }
 

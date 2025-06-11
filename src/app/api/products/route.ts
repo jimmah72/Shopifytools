@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getProducts } from '@/lib/shopify-api'
+import { formatShopDomain } from '@/lib/shopify.config'
 
 interface TransformedProduct {
   id: string
@@ -61,6 +62,18 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    if (!store.domain || !store.accessToken) {
+      console.error('Products API - Store missing domain or access token')
+      return NextResponse.json(
+        { error: 'Store configuration is incomplete. Please reconnect your Shopify store.' },
+        { status: 500 }
+      )
+    }
+
+    // Format the store domain
+    const formattedDomain = formatShopDomain(store.domain)
+    console.log('Products API - Formatted domain:', formattedDomain)
+
     // Get query parameters
     const searchParams = request.nextUrl.searchParams
     const limit = parseInt(searchParams.get('limit') || '50')
@@ -68,7 +81,7 @@ export async function GET(request: NextRequest) {
     
     // Fetch products from Shopify
     console.log('Products API - Fetching products from Shopify')
-    const products = await getProducts(store.domain, store.accessToken, { limit })
+    const products = await getProducts(formattedDomain, store.accessToken, { limit })
     console.log('Products API - Successfully fetched products')
 
     return NextResponse.json({ products })

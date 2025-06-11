@@ -1,4 +1,5 @@
 import { LATEST_API_VERSION } from '@shopify/shopify-api';
+import { formatShopDomain } from './shopify.config';
 
 function validateEnvironmentVariables() {
   console.log('Shopify API - Validating environment variables')
@@ -30,7 +31,11 @@ export async function getProducts(shop: string, accessToken: string, options: { 
     // Only check environment variables when the function is actually called
     validateEnvironmentVariables();
 
-    const url = new URL(`https://${shop}/admin/api/${LATEST_API_VERSION}/products.json`);
+    // Format the shop domain
+    const formattedDomain = formatShopDomain(shop);
+    console.log('Shopify API - Using formatted domain:', formattedDomain);
+
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/products.json`);
     
     if (options.limit) {
       url.searchParams.set('limit', options.limit.toString());
