@@ -23,24 +23,44 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const fetchStore = async () => {
+      console.log('StoreContext - Fetching store...')
       try {
         const response = await fetch('/api/store')
+        console.log('StoreContext - Store API response status:', response.status)
+        
         if (response.ok) {
           const data = await response.json()
+          console.log('StoreContext - Store data:', data)
           setStore(data)
+        } else {
+          const errorData = await response.json()
+          console.error('StoreContext - Store API error:', errorData)
         }
       } catch (error) {
-        console.error('Error fetching store:', error)
+        console.error('StoreContext - Error fetching store:', error)
       } finally {
+        console.log('StoreContext - Setting loading to false')
         setLoading(false)
       }
     }
 
+    console.log('StoreContext - Initial render, calling fetchStore')
     fetchStore()
   }, [])
 
+  const contextValue = {
+    store,
+    setStore: (newStore: Store | null) => {
+      console.log('StoreContext - Setting new store:', newStore)
+      setStore(newStore)
+    },
+    loading
+  }
+
+  console.log('StoreContext - Current state:', { store, loading })
+
   return (
-    <StoreContext.Provider value={{ store, setStore, loading }}>
+    <StoreContext.Provider value={contextValue}>
       {children}
     </StoreContext.Provider>
   )

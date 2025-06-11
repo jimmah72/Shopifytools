@@ -6,34 +6,41 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 export async function GET(request: NextRequest) {
+  console.log('Shopify Auth API - GET request received')
   try {
     const searchParams = request.nextUrl.searchParams;
     const shop = searchParams.get('shop');
+    console.log('Shopify Auth API - Shop parameter:', shop)
 
     if (!shop) {
+      console.log('Shopify Auth API - Missing shop parameter')
       return NextResponse.json(
         { error: 'Missing shop parameter' },
         { status: 400 }
       );
     }
 
-    if (!isValidShopDomain(shop)) {
+    const formattedDomain = formatShopDomain(shop);
+    console.log('Shopify Auth API - Formatted domain:', formattedDomain)
+
+    if (!isValidShopDomain(formattedDomain)) {
+      console.log('Shopify Auth API - Invalid shop domain')
       return NextResponse.json(
         { error: 'Invalid shop domain' },
         { status: 400 }
       );
     }
 
-    const installUrl = await generateInstallUrl(shop, request);
-    
-    return NextResponse.redirect(installUrl);
+    // Generate the installation URL
+    console.log('Shopify Auth API - Generating install URL')
+    const authUrl = await generateInstallUrl(formattedDomain, request);
+    console.log('Shopify Auth API - Generated auth URL:', authUrl)
+
+    return NextResponse.json({ authUrl });
   } catch (error) {
-    console.error('Error in Shopify auth:', error);
+    console.error('Shopify Auth API - Error:', error)
     return NextResponse.json(
-      { 
-        error: 'Failed to initialize Shopify authentication',
-        details: error instanceof Error ? error.message : String(error)
-      },
+      { error: 'Failed to generate auth URL' },
       { status: 500 }
     );
   }

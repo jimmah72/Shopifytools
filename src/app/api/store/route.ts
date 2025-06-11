@@ -6,9 +6,9 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 export async function GET() {
+  console.log('Store API - GET request received')
   try {
-    // For now, we'll just return the first store
-    // In a real app, you'd get the store based on the user's session
+    console.log('Store API - Attempting to find first store')
     const store = await prisma.store.findFirst({
       include: {
         _count: {
@@ -20,16 +20,20 @@ export async function GET() {
       },
     })
 
+    console.log('Store API - Found store:', store)
+
     if (!store) {
+      console.log('Store API - No store found, returning 404')
       return NextResponse.json(
         { error: 'No store found' },
         { status: 404 }
       )
     }
 
+    console.log('Store API - Returning store data')
     return NextResponse.json(store)
   } catch (error) {
-    console.error('Error fetching store:', error)
+    console.error('Store API - Error fetching store:', error)
     return NextResponse.json(
       { error: 'Failed to fetch store' },
       { status: 500 }
@@ -38,17 +42,21 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  console.log('Store API - PUT request received')
   try {
     const body = await request.json()
+    console.log('Store API - Request body:', body)
     const { id, name, domain } = body
 
     if (!id) {
+      console.log('Store API - Missing store ID, returning 400')
       return NextResponse.json(
         { error: 'Store ID is required' },
         { status: 400 }
       )
     }
 
+    console.log('Store API - Updating store:', { id, name, domain })
     const store = await prisma.store.update({
       where: { id },
       data: {
@@ -57,9 +65,10 @@ export async function PUT(request: NextRequest) {
       },
     })
 
+    console.log('Store API - Store updated:', store)
     return NextResponse.json(store)
   } catch (error) {
-    console.error('Error updating store:', error)
+    console.error('Store API - Error updating store:', error)
     return NextResponse.json(
       { error: 'Failed to update store' },
       { status: 500 }
