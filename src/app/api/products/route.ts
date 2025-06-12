@@ -13,6 +13,7 @@ interface ShopifyProduct {
   handle: string;
   images: Array<{ src: string }>;
   variants: ShopifyVariant[];
+  status: string;
 }
 
 interface ShopifyVariant {
@@ -22,6 +23,20 @@ interface ShopifyVariant {
   sku?: string;
   inventory_quantity?: number;
   inventory_item_id?: string;
+}
+
+// Map Shopify status to our frontend format
+function mapShopifyStatus(shopifyStatus: string): 'Active' | 'Draft' | 'Archived' {
+  switch (shopifyStatus?.toUpperCase()) {
+    case 'ACTIVE':
+      return 'Active';
+    case 'DRAFT':
+      return 'Draft';
+    case 'ARCHIVED':
+      return 'Archived';
+    default:
+      return 'Active'; // Default fallback
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -104,53 +119,110 @@ export async function GET(request: NextRequest) {
       costData = await getProductsCostData(formattedDomain, store.accessToken, productIds);
     }
 
-    // Transform products to our format with SHOPIFY as default source
+    // Fetch existing database records for products on current page
+    const numericProductIds = paginatedProducts.map((product: ShopifyProduct) => {
+      return product.id.includes('gid://shopify/Product/') 
+        ? product.id.replace('gid://shopify/Product/', '')
+        : product.id;
+    });
+
+    const existingProducts = await prisma.product.findMany({
+      where: {
+        shopifyId: { in: numericProductIds },
+        storeId: store.id
+      },
+      select: {
+        shopifyId: true,
+        costSource: true,
+        costOfGoodsSold: true,
+        handlingFees: true,
+        miscFees: true,
+        lastEdited: true
+      }
+    });
+
+    const existingProductMap = new Map(
+      existingProducts.map(p => [p.shopifyId, p])
+    );
+
+    console.log('Products API - Found', existingProducts.length, 'existing database records for products');
+
+    // Transform products to our format, respecting database state
     const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
       const variant = shopifyProduct.variants[0] || {};
       const price = parseFloat(variant.price) || 0;
       
-      // Get Shopify inventory cost - use fetched cost data if available
-      const shopifyInventoryCost = fetchCosts ? (costData[shopifyProduct.id] || 0) : 0;
+      // Extract numeric ID from GraphQL ID format (gid://shopify/Product/123 -> 123)
+      const numericId = shopifyProduct.id.includes('gid://shopify/Product/') 
+        ? shopifyProduct.id.replace('gid://shopify/Product/', '')
+        : shopifyProduct.id;
       
-      // Default ALL products to SHOPIFY source as requested
-      const costSource = 'SHOPIFY';
-      const costOfGoodsSold = shopifyInventoryCost;
-      const handlingFees = 0; // Shopify doesn't have handling fees
-      const miscFees = 0; // Start with 0, user can edit
+      // Get Shopify inventory cost - use fetched cost data if available
+      const shopifyInventoryCost = fetchCosts ? costData[numericId] : undefined;
+      
+      // Check if we have existing database record for this product
+      const existingProduct = existingProductMap.get(numericId);
+      
+      // Use database values if they exist, otherwise default to SHOPIFY
+      const costSource = existingProduct?.costSource || 'SHOPIFY';
+      const costOfGoodsSold = existingProduct?.costSource === 'MANUAL' 
+        ? (existingProduct.costOfGoodsSold || 0)
+        : (shopifyInventoryCost !== undefined ? shopifyInventoryCost : 0); // Only fallback to 0 if shopifyInventoryCost is undefined, preserve null for missing data
+      const handlingFees = existingProduct?.costSource === 'MANUAL' 
+        ? (existingProduct.handlingFees || 0)
+        : 0; // Shopify doesn't have handling fees
+      const miscFees = existingProduct?.miscFees || 0;
       
       // Calculate margin
       const totalCost = costOfGoodsSold + handlingFees + miscFees;
       const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
       
-      return {
-        id: shopifyProduct.id,
+
+      
+      const productData = {
+        id: numericId,
         title: shopifyProduct.title,
         image: shopifyProduct.images?.[0]?.src || '',
-        status: 'Active' as const,
-        lastEdited: new Date().toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        }),
+        status: mapShopifyStatus(shopifyProduct.status),
+        lastEdited: existingProduct?.lastEdited 
+          ? existingProduct.lastEdited.toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
+            })
+          : new Date().toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
+            }),
         sellingPrice: price,
         costOfGoodsSold: costOfGoodsSold,
         handlingFees: handlingFees,
         miscFees: miscFees,
         margin: margin,
         costSource: costSource,
-        shopifyCostOfGoodsSold: shopifyInventoryCost, // Always include Shopify cost for reference
+        shopifyCostOfGoodsSold: shopifyInventoryCost, // Direct assignment - undefined becomes null in JSON
         shopifyHandlingFees: 0, // Shopify doesn't have handling fees
         sku: variant.sku || '',
         inventoryQuantity: variant.inventory_quantity || 0,
-        variants: shopifyProduct.variants.map(v => ({
-          id: v.id,
-          price: parseFloat(v.price) || 0,
-          inventory_cost: fetchCosts ? (costData[shopifyProduct.id] || 0) : 0,
-          sku: v.sku || '',
-          inventory_quantity: v.inventory_quantity || 0,
-          inventory_tracked: (v as any).inventory_tracked || false
-        }))
+        variants: shopifyProduct.variants.map(v => {
+          // Extract numeric variant ID from GraphQL ID format
+          const numericVariantId = v.id.includes('gid://shopify/ProductVariant/') 
+            ? v.id.replace('gid://shopify/ProductVariant/', '')
+            : v.id;
+          
+          return {
+            id: numericVariantId,
+            price: parseFloat(v.price) || 0,
+            inventory_cost: fetchCosts ? (costData[numericId] || 0) : 0,
+            sku: v.sku || '',
+            inventory_quantity: v.inventory_quantity || 0,
+            inventory_tracked: (v as any).inventory_tracked || false
+          };
+        })
       };
+      
+      return productData;
     });
 
     console.log('Products API - Successfully transformed products')

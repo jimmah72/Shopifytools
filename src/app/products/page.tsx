@@ -18,7 +18,7 @@ interface Product {
   miscFees: number;
   margin: number;
   costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number;
+  shopifyCostOfGoodsSold?: number | null;
   shopifyHandlingFees?: number;
 }
 
@@ -60,24 +60,7 @@ export default function ProductsPage() {
   // Debounce search term to avoid too many API calls
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  // The API now returns products in the correct format, so just ensure proper typing
-  const transformProduct = useCallback((product: any): Product => {
-    return {
-      id: product.id.toString(),
-      title: product.title,
-      image: product.image,
-      status: product.status || 'Active',
-      lastEdited: product.lastEdited,
-      sellingPrice: product.sellingPrice,
-      costOfGoodsSold: product.costOfGoodsSold,
-      handlingFees: product.handlingFees,
-      miscFees: product.miscFees,
-      margin: product.margin,
-      costSource: product.costSource,
-      shopifyCostOfGoodsSold: product.shopifyCostOfGoodsSold || 0,
-      shopifyHandlingFees: product.shopifyHandlingFees || 0
-    };
-  }, []);
+
 
   const fetchProducts = useCallback(async (page: number = 1, search: string = '') => {
     try {
@@ -98,8 +81,22 @@ export default function ProductsPage() {
       
       const data: ProductsResponse = await response.json();
       
-      // Transform products
-      const transformedProducts = data.products.map(transformProduct);
+      // Transform products with a stable transform function
+      const transformedProducts = data.products.map((product: any): Product => ({
+        id: product.id.toString(),
+        title: product.title,
+        image: product.image,
+        status: product.status || 'Active',
+        lastEdited: product.lastEdited,
+        sellingPrice: product.sellingPrice,
+        costOfGoodsSold: product.costOfGoodsSold,
+        handlingFees: product.handlingFees,
+        miscFees: product.miscFees,
+        margin: product.margin,
+        costSource: product.costSource,
+        shopifyCostOfGoodsSold: product.shopifyCostOfGoodsSold, // Preserve null values - don't default to 0
+        shopifyHandlingFees: product.shopifyHandlingFees || 0
+      }));
       
       setProducts(transformedProducts);
       setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));
@@ -111,20 +108,20 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [transformProduct, PRODUCTS_PER_PAGE]);
+  }, [PRODUCTS_PER_PAGE]);
 
   // Effect for initial load and search
   useEffect(() => {
     setCurrentPage(1); // Reset to first page when search changes
     fetchProducts(1, debouncedSearchTerm);
-  }, [debouncedSearchTerm, fetchProducts]);
+  }, [debouncedSearchTerm]); // Removed fetchProducts from dependencies
 
   // Effect for page changes
   useEffect(() => {
     if (currentPage > 1) {
       fetchProducts(currentPage, debouncedSearchTerm);
     }
-  }, [currentPage, fetchProducts, debouncedSearchTerm]);
+  }, [currentPage, debouncedSearchTerm]); // Removed fetchProducts from dependencies
 
   const recalculateMargin = useCallback((product: Product) => {
     const currentCost = product.costSource === 'SHOPIFY' 
@@ -237,14 +234,16 @@ export default function ProductsPage() {
 
     // Save the cost source change to the database
     try {
-      const product = products.find(p => p.id === productId);
-      if (product) {
-        await handleSave(productId, {
-          costOfGoodsSold: product.costOfGoodsSold,
-          handlingFees: product.handlingFees,
-          miscFees: product.miscFees,
-          costSource: newSource
-        });
+      const response = await fetch(`/api/products/${productId}/costs`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ costSource: newSource }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save cost source');
       }
     } catch (error) {
       console.error('Failed to save cost source change:', error);
@@ -261,7 +260,7 @@ export default function ProductsPage() {
         )
       );
     }
-  }, [recalculateMargin, products, handleSave]);
+  }, [recalculateMargin]);
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);

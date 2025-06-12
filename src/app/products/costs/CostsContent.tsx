@@ -15,7 +15,7 @@ interface Product {
   miscFees: number;
   margin: number;
   costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number;
+  shopifyCostOfGoodsSold?: number | null;
   shopifyHandlingFees?: number;
 }
 

@@ -28,7 +28,7 @@ interface Product {
   miscFees: number;
   margin: number;
   costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number;
+  shopifyCostOfGoodsSold?: number | null;
   shopifyHandlingFees?: number;
 }
 
@@ -169,9 +169,9 @@ export function CostOfGoodsTable({
   };
 
   const isShopifyCostAvailable = (product: Product) => {
-    // Cost data is available if shopifyCostOfGoodsSold is defined (even if 0)
-    // 0 is a valid cost value from Shopify
-    return product.shopifyCostOfGoodsSold !== undefined;
+    // Cost data is available if shopifyCostOfGoodsSold is not null/undefined
+    // null means no cost data available from Shopify
+    return product.shopifyCostOfGoodsSold !== null && product.shopifyCostOfGoodsSold !== undefined;
   };
 
   return (
@@ -266,7 +266,16 @@ export function CostOfGoodsTable({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="bg-green-400 text-black border-0 font-medium dark:bg-green-400 dark:text-black">
+                  <Badge 
+                    variant="outline" 
+                    className={`border-0 font-medium ${
+                      product.status === 'Active' 
+                        ? 'bg-green-400 text-black dark:bg-green-400 dark:text-black'
+                        : product.status === 'Draft'
+                        ? 'bg-yellow-400 text-black dark:bg-yellow-400 dark:text-black'
+                        : 'bg-gray-400 text-black dark:bg-gray-400 dark:text-black'
+                    }`}
+                  >
                     {product.status}
                   </Badge>
                 </TableCell>

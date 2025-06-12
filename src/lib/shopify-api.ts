@@ -1004,8 +1004,15 @@ export async function getAllProducts(shop: string, accessToken: string): Promise
       };
     });
 
+    // Transform images from GraphQL structure to flat array
+    const transformedImages = product.images.edges.map((imageEdge: any) => ({
+      src: imageEdge.node.src,
+      alt: imageEdge.node.altText
+    }));
+
     return {
       ...product,
+      images: transformedImages,
       variants: transformedVariants
     };
   });
@@ -1049,7 +1056,12 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
         }
       `;
 
-      const variables: { id: string } = { id: `gid://shopify/Product/${productId}` };
+      // Extract numeric ID if it's in GraphQL format, otherwise use as-is
+      const numericProductId = productId.includes('gid://shopify/Product/') 
+        ? productId.replace('gid://shopify/Product/', '')
+        : productId;
+
+      const variables: { id: string } = { id: `gid://shopify/Product/${numericProductId}` };
 
       try {
         const result: any = await retryWithBackoff(async (): Promise<any> => {
@@ -1079,37 +1091,42 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
         });
 
         if (result.errors) {
-          console.log(`Shopify API - GraphQL errors for product ${productId}:`, result.errors);
-          return { productId, cost: 0 };
+          console.log(`Shopify API - GraphQL errors for product ${numericProductId}:`, result.errors);
+          return { productId: numericProductId, cost: null };
         }
 
         const product = result.data?.product;
         if (product && product.variants.edges.length > 0) {
           const firstVariant = product.variants.edges[0].node;
-          const unitCost = firstVariant.inventoryItem?.unitCost?.amount || '0';
-          const cost = parseFloat(unitCost) || 0;
+          const unitCost = firstVariant.inventoryItem?.unitCost?.amount;
           
-          if (cost > 0) {
-            console.log(`Shopify API - Product ${productId}: Found cost $${cost}`);
+          // Only return a cost if we have valid cost data
+          if (unitCost && unitCost !== '0' && unitCost !== '0.00') {
+            const cost = parseFloat(unitCost);
+            if (cost > 0) {
+              console.log(`Shopify API - Product ${numericProductId}: Found cost $${cost}`);
+              return { productId: numericProductId, cost };
+            }
           }
-          
-          return { productId, cost };
         }
 
-        return { productId, cost: 0 };
+        // Return null cost for products without cost data
+        return { productId: numericProductId, cost: null };
 
       } catch (error) {
-        console.error(`Shopify API - Error fetching cost for product ${productId}:`, error);
-        return { productId, cost: 0 };
+        console.error(`Shopify API - Error fetching cost for product ${numericProductId}:`, error);
+        return { productId: numericProductId, cost: null };
       }
     });
 
     // Wait for batch to complete
     const batchResults = await Promise.all(promises);
     
-    // Add results to cost map
-    batchResults.forEach(({ productId, cost }: { productId: string, cost: number }) => {
-      costMap[productId] = cost;
+    // Add results to cost map, filtering out null values
+    batchResults.forEach((result) => {
+      if (result && result.productId && result.cost !== null && result.cost !== undefined && result.cost > 0) {
+        costMap[result.productId] = result.cost;
+      }
     });
 
     // Small delay between batches to be respectful to the API
