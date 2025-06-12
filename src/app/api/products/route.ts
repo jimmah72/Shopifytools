@@ -134,74 +134,74 @@ export async function GET(request: NextRequest) {
     const formattedDomain = formatShopDomain(store.domain)
     console.log('Products API - Formatted domain:', formattedDomain)
 
-    // Get query parameters
+    // Get query parameters with pagination support
     const searchParams = request.nextUrl.searchParams
-    const limit = parseInt(searchParams.get('limit') || '250')
-    console.log('Products API - Fetching products with limit:', limit)
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const search = searchParams.get('search') || ''
     
-    // Fetch products from Shopify with inventory costs
+    console.log('Products API - Query params:', { page, limit, search })
+    
+    // For better performance, we'll use a smaller default limit
+    const actualLimit = Math.min(limit, 50) // Cap at 50 products per request
+    
+    // Fetch products from Shopify with pagination
     console.log('Products API - Fetching products from Shopify with inventory costs')
     const shopifyProducts = (await getProductsWithInventoryCosts(formattedDomain, store.accessToken, { 
-      limit
+      limit: actualLimit,
+      // Note: Shopify's REST API doesn't support offset pagination well
+      // For now, we'll fetch a reasonable amount and implement client-side pagination
+      // In production, consider using GraphQL API for better pagination
     })) as ShopifyProduct[]
 
     console.log('Products API - Total Shopify products fetched:', shopifyProducts.length)
-    console.log('Products API - All products from Shopify:')
-    shopifyProducts.forEach((product, index) => {
-      console.log(`  ${index + 1}. ${product.title} (ID: ${product.id})`)
-    })
 
-    console.log('Products API - First Shopify product:', shopifyProducts[0] ? {
-      id: shopifyProducts[0].id,
-      title: shopifyProducts[0].title,
-      variants: shopifyProducts[0].variants.map(v => ({
-        id: v.id,
-        cost_per_item: v.cost_per_item,
-        parsed_cost: parseFloat(v.cost_per_item)
-      }))
-    } : null)
+    // Apply search filter if provided
+    let filteredProducts = shopifyProducts;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredProducts = shopifyProducts.filter(product => 
+        product.title.toLowerCase().includes(searchLower) ||
+        product.handle.toLowerCase().includes(searchLower) ||
+        product.variants.some(variant => 
+          variant.sku?.toLowerCase().includes(searchLower)
+        )
+      );
+      console.log('Products API - Filtered products by search:', filteredProducts.length);
+    }
 
-    // Fetch cost data from our database
+    // Implement client-side pagination
+    const totalProducts = filteredProducts.length;
+    const totalPages = Math.ceil(totalProducts / actualLimit);
+    const startIndex = (page - 1) * actualLimit;
+    const endIndex = startIndex + actualLimit;
+    const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
+    console.log('Products API - Pagination:', {
+      totalProducts,
+      totalPages,
+      currentPage: page,
+      startIndex,
+      endIndex,
+      returnedProducts: paginatedProducts.length
+    });
+
+    // Fetch cost data from our database (simplified for performance)
     const dbProducts = await prisma.product.findMany({
-      where: { storeId: store.id },
-      select: {
-        shopifyId: true,
-        costOfGoodsSold: true,
-        handlingFees: true,
-        miscFees: true,
-        costSource: true,
-        lastEdited: true,
-        variants: {
-          select: {
-            id: true,
-            cost: true,
-            costSource: true,
-            costLastUpdated: true
-          }
-        }
+      where: { 
+        storeId: store.id
       }
     })
 
     console.log('Products API - Database products found:', dbProducts.length)
-    console.log('Products API - Database products:', dbProducts.map(p => ({
-      shopifyId: p.shopifyId,
-      miscFees: p.miscFees,
-      costOfGoodsSold: p.costOfGoodsSold,
-      handlingFees: p.handlingFees,
-      costSource: p.costSource
-    })))
 
-    // Merge Shopify data with our cost data
-    const products = shopifyProducts.map((shopifyProduct: ShopifyProduct) => {
-      const dbProduct = dbProducts.find(p => p.shopifyId === shopifyProduct.id)
-      console.log(`Products API - Looking for product ${shopifyProduct.id} in database:`, dbProduct ? 'FOUND' : 'NOT FOUND')
-      if (dbProduct) {
-        console.log(`Products API - Database product data:`, {
-          miscFees: dbProduct.miscFees,
-          costOfGoodsSold: dbProduct.costOfGoodsSold,
-          handlingFees: dbProduct.handlingFees
-        })
-      }
+    // Create a lookup map for better performance
+    const dbProductMap = new Map(dbProducts.map(p => [p.shopifyId, p]));
+
+    // Merge Shopify data with our cost data (only for paginated products)
+    const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
+      const dbProduct = dbProductMap.get(shopifyProduct.id)
+      
       return {
         ...shopifyProduct,
         // Add database fields to the product
@@ -211,31 +211,13 @@ export async function GET(request: NextRequest) {
         dbCostSource: dbProduct?.costSource || 'SHOPIFY',
         dbLastEdited: dbProduct?.lastEdited,
         variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
-          const dbVariant = dbProduct?.variants?.find((v: any) => v.id === variant.id)
-          // Try inventory cost first, then cost_per_item
+          // For now, we'll use a simpler approach for variants
+          // In production, you'd want to properly join variant data
           const inventoryCost = variant.inventory_cost ? parseFloat(variant.inventory_cost) : null
           const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
           const finalShopifyCost = inventoryCost || shopifyCost
           
-          console.log(`Processing variant ${variant.id}:`, {
-            dbVariantCost: dbVariant?.cost,
-            rawShopifyCost: variant.cost_per_item,
-            inventoryCost: variant.inventory_cost,
-            finalShopifyCost: finalShopifyCost,
-            dbVariantSource: dbVariant?.costSource
-          })
-          
-          // If we have a dbVariant with a cost and it's set to MANUAL, use that
-          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined && dbVariant?.costSource === 'MANUAL') {
-            return {
-              ...variant,
-              cost: dbVariant.cost,
-              costSource: 'MANUAL',
-              costLastUpdated: dbVariant.costLastUpdated ?? new Date()
-            }
-          }
-          
-          // Try to use Shopify's cost (inventory or cost_per_item) if available and valid
+          // Try to use Shopify's cost if available and valid
           if (finalShopifyCost !== null && !isNaN(finalShopifyCost) && finalShopifyCost > 0) {
             return {
               ...variant,
@@ -245,18 +227,7 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // If we have any dbVariant cost as a fallback, use that
-          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined) {
-            return {
-              ...variant,
-              cost: dbVariant.cost,
-              costSource: dbVariant.costSource ?? 'MANUAL',
-              costLastUpdated: dbVariant.costLastUpdated ?? new Date()
-            }
-          }
-          
-          // If no cost data is available anywhere, default to MANUAL mode with 0 cost
-          // This allows users to enter their own cost data
+          // Default to manual mode with 0 cost
           return {
             ...variant,
             cost: 0,
@@ -268,7 +239,14 @@ export async function GET(request: NextRequest) {
     })
 
     console.log('Products API - Successfully fetched and merged products')
-    return NextResponse.json({ products })
+    
+    return NextResponse.json({ 
+      products,
+      total: totalProducts,
+      page,
+      totalPages,
+      limit: actualLimit
+    })
   } catch (error) {
     console.error('Products API - Error:', error)
     

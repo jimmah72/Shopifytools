@@ -1,8 +1,10 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState, useCallback, useMemo } from 'react';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
-import { Box, Typography, CircularProgress } from '@mui/material';
+import { Box, Typography, CircularProgress, Pagination, TextField, InputAdornment, Skeleton } from '@mui/material';
+import { Search } from '@mui/icons-material';
+import { useDebounce } from '@/hooks/useDebounce';
 
 interface Product {
   id: string;
@@ -20,77 +22,133 @@ interface Product {
   shopifyHandlingFees?: number;
 }
 
+interface ProductsResponse {
+  products: any[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+// Skeleton loader component
+const ProductsTableSkeleton = () => (
+  <Box sx={{ mt: 4 }}>
+    {[...Array(10)].map((_, index) => (
+      <Box key={index} sx={{ display: 'flex', alignItems: 'center', py: 2, borderBottom: '1px solid #e0e0e0' }}>
+        <Skeleton variant="rectangular" width={40} height={40} sx={{ mr: 2 }} />
+        <Box sx={{ flex: 1 }}>
+          <Skeleton variant="text" width="60%" height={24} />
+          <Skeleton variant="text" width="40%" height={16} />
+        </Box>
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+      </Box>
+    ))}
+  </Box>
+);
+
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const PRODUCTS_PER_PAGE = 20;
 
-  async function fetchProducts() {
+  // Debounce search term to avoid too many API calls
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+
+  // Transform Shopify products into our format
+  const transformProduct = useCallback((product: any): Product => {
+    const variant = product.variants[0] || {};
+    const shopifyCost = variant.cost || 0;
+    const price = parseFloat(variant.price) || 0;
+    
+    // Get database values if they exist, otherwise use Shopify values
+    const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
+    const dbHandlingFees = product.dbHandlingFees || 0;
+    const dbMiscFees = product.dbMiscFees || 0;
+    const costSource = product.dbCostSource || 'MANUAL';
+    
+    // Calculate margin based on current source
+    const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
+    const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees;
+    const totalCost = currentCost + currentHandling + dbMiscFees;
+    const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
+    
+    // Format the date to be more readable
+    const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
+    const formattedDate = lastEdited.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+    
+    return {
+      id: product.id,
+      title: product.title,
+      image: product.images?.[0]?.src,
+      status: 'Active' as const,
+      lastEdited: formattedDate,
+      sellingPrice: price,
+      costOfGoodsSold: dbCostOfGoodsSold,
+      handlingFees: dbHandlingFees,
+      miscFees: dbMiscFees,
+      margin: margin,
+      costSource: costSource as 'SHOPIFY' | 'MANUAL',
+      shopifyCostOfGoodsSold: shopifyCost,
+      shopifyHandlingFees: 0
+    };
+  }, []);
+
+  const fetchProducts = useCallback(async (page: number = 1, search: string = '') => {
     try {
       setLoading(true);
-      const response = await fetch('/api/products?limit=250');
+      setError(null);
+      
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: PRODUCTS_PER_PAGE.toString(),
+        ...(search && { search })
+      });
+      
+      const response = await fetch(`/api/products?${params}`);
       if (!response.ok) {
         throw new Error('Failed to fetch products');
       }
-      const data = await response.json();
       
-      // Transform Shopify products into our format
-      const transformedProducts = data.products.map((product: any) => {
-        const variant = product.variants[0] || {};
-        const shopifyCost = variant.cost || 0;
-        const price = parseFloat(variant.price) || 0;
-        
-        // Get database values if they exist, otherwise use Shopify values
-        const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
-        const dbHandlingFees = product.dbHandlingFees || 0;
-        const dbMiscFees = product.dbMiscFees || 0;
-        const costSource = product.dbCostSource || 'MANUAL'; // Default to MANUAL if no Shopify cost available
-        
-        // Calculate margin based on current source
-        const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
-        const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees; // Shopify doesn't have handling fees
-        const totalCost = currentCost + currentHandling + dbMiscFees; // Misc is always from our DB
-        const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
-        
-        // Format the date to be more readable
-        const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
-        const formattedDate = lastEdited.toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        });
-        
-        return {
-          id: product.id,
-          title: product.title,
-          image: product.images?.[0]?.src,
-          status: 'Active' as const, // We can enhance this later
-          lastEdited: formattedDate,
-          sellingPrice: price,
-          costOfGoodsSold: dbCostOfGoodsSold,
-          handlingFees: dbHandlingFees,
-          miscFees: dbMiscFees,
-          margin: margin,
-          costSource: costSource as 'SHOPIFY' | 'MANUAL',
-          shopifyCostOfGoodsSold: shopifyCost,
-          shopifyHandlingFees: 0 // Shopify doesn't have handling fees
-        };
-      });
-
+      const data: ProductsResponse = await response.json();
+      
+      // Transform products
+      const transformedProducts = data.products.map(transformProduct);
+      
       setProducts(transformedProducts);
+      setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));
+      setTotalProducts(data.total || data.products.length);
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
     } finally {
       setLoading(false);
     }
-  }
+  }, [transformProduct, PRODUCTS_PER_PAGE]);
 
+  // Effect for initial load and search
   useEffect(() => {
-    fetchProducts();
-  }, []);
+    setCurrentPage(1); // Reset to first page when search changes
+    fetchProducts(1, debouncedSearchTerm);
+  }, [debouncedSearchTerm, fetchProducts]);
 
-  const recalculateMargin = (product: Product) => {
+  // Effect for page changes
+  useEffect(() => {
+    if (currentPage > 1) {
+      fetchProducts(currentPage, debouncedSearchTerm);
+    }
+  }, [currentPage, fetchProducts, debouncedSearchTerm]);
+
+  const recalculateMargin = useCallback((product: Product) => {
     const currentCost = product.costSource === 'SHOPIFY' 
       ? (product.shopifyCostOfGoodsSold || 0) 
       : product.costOfGoodsSold;
@@ -99,10 +157,10 @@ export default function ProductsPage() {
       : product.handlingFees;
     const totalCost = currentCost + currentHandling + product.miscFees;
     return product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
-  };
+  }, []);
 
-  // Local state updates (don't persist until save)
-  const handleCostUpdate = (productId: string, newCost: number) => {
+  // Optimized handlers with useCallback to prevent unnecessary re-renders
+  const handleCostUpdate = useCallback((productId: string, newCost: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
         p.id === productId 
@@ -114,9 +172,9 @@ export default function ProductsPage() {
           : p
       )
     );
-  };
+  }, [recalculateMargin]);
 
-  const handleHandlingFeesUpdate = (productId: string, newFees: number) => {
+  const handleHandlingFeesUpdate = useCallback((productId: string, newFees: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
         p.id === productId 
@@ -128,9 +186,9 @@ export default function ProductsPage() {
           : p
       )
     );
-  };
+  }, [recalculateMargin]);
 
-  const handleMiscFeesUpdate = (productId: string, newFees: number) => {
+  const handleMiscFeesUpdate = useCallback((productId: string, newFees: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
         p.id === productId 
@@ -142,9 +200,9 @@ export default function ProductsPage() {
           : p
       )
     );
-  };
+  }, [recalculateMargin]);
 
-  const handleCostSourceToggle = (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
+  const handleCostSourceToggle = useCallback((productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
         p.id === productId 
@@ -156,10 +214,14 @@ export default function ProductsPage() {
           : p
       )
     );
-  };
+  }, [recalculateMargin]);
 
-  // Save to our database only
-  const handleSave = async (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number; costSource: string }) => {
+  const handleSave = useCallback(async (productId: string, costs: { 
+    costOfGoodsSold: number; 
+    handlingFees: number; 
+    miscFees: number; 
+    costSource: string 
+  }) => {
     try {
       const response = await fetch(`/api/products/${productId}/costs`, {
         method: 'PATCH',
@@ -191,13 +253,24 @@ export default function ProductsPage() {
     } catch (err) {
       console.error('Error saving costs:', err);
       setError(err instanceof Error ? err.message : 'Failed to save costs');
-      throw err; // Re-throw so the component can handle the error
+      throw err;
     }
-  };
+  }, []);
+
+  const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
+    setCurrentPage(page);
+    // Scroll to top when page changes
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const handleSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(event.target.value);
+  }, []);
 
   if (error) {
     return (
       <Box sx={{ p: 4 }}>
+        <Typography color="error" variant="h6">Error loading products</Typography>
         <Typography color="error">{error}</Typography>
       </Box>
     );
@@ -205,27 +278,68 @@ export default function ProductsPage() {
 
   return (
     <Box sx={{ p: 4 }}>
-      <Box sx={{ mb: 6 }}>
-        <Typography variant="h4" sx={{ mb: 2 }}>Cost Of Goods</Typography>
-        <Typography color="text.secondary">
-          Set up and manage your Cost of Goods Sold (COGS) to ensure precise Net Profit calculations.{' '}
-          <a href="#" className="text-blue-500 hover:underline">See how to set up COGS</a>
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" sx={{ mb: 2 }}>
+          Cost Of Goods
         </Typography>
+        <Typography color="text.secondary" sx={{ mb: 3 }}>
+          Set up and manage your Cost of Goods Sold (COGS) to ensure precise Net Profit calculations.{' '}
+          <a href="#" className="text-blue-500 hover:underline">
+            See how to set up COGS
+          </a>
+        </Typography>
+
+        {/* Search and Stats */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <TextField
+            placeholder="Search products..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            sx={{ width: 300 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search />
+                </InputAdornment>
+              ),
+            }}
+          />
+          
+          <Typography variant="body2" color="text.secondary">
+            {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}
+          </Typography>
+        </Box>
       </Box>
 
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-          <CircularProgress />
+      {/* Products Table */}
+      <Suspense fallback={<ProductsTableSkeleton />}>
+        {loading ? (
+          <ProductsTableSkeleton />
+        ) : (
+          <CostOfGoodsTable 
+            products={products}
+            onCostUpdate={handleCostUpdate}
+            onHandlingFeesUpdate={handleHandlingFeesUpdate}
+            onMiscFeesUpdate={handleMiscFeesUpdate}
+            onCostSourceToggle={handleCostSourceToggle}
+            onSave={handleSave}
+          />
+        )}
+      </Suspense>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+          <Pagination
+            count={totalPages}
+            page={currentPage}
+            onChange={handlePageChange}
+            color="primary"
+            size="large"
+            showFirstButton
+            showLastButton
+          />
         </Box>
-      ) : (
-        <CostOfGoodsTable 
-          products={products}
-          onCostUpdate={handleCostUpdate}
-          onHandlingFeesUpdate={handleHandlingFeesUpdate}
-          onMiscFeesUpdate={handleMiscFeesUpdate}
-          onCostSourceToggle={handleCostSourceToggle}
-          onSave={handleSave}
-        />
       )}
     </Box>
   );
