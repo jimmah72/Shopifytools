@@ -18,6 +18,7 @@ import MenuIcon from "@mui/icons-material/Menu";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import ShoppingCartIcon from "@mui/icons-material/ShoppingCart";
 import InventoryIcon from "@mui/icons-material/Inventory";
+import CampaignIcon from "@mui/icons-material/Campaign";
 import SettingsIcon from "@mui/icons-material/Settings";
 import Link from "next/link";
 import ThemeToggle from "@/components/ui/ThemeToggle";
@@ -32,6 +33,7 @@ const menuItems = [
   { text: "Dashboard", icon: <DashboardIcon />, href: "/" },
   { text: "Orders", icon: <ShoppingCartIcon />, href: "/orders" },
   { text: "Products", icon: <InventoryIcon />, href: "/products" },
+  { text: "Ad Spend", icon: <CampaignIcon />, href: "/ad-spend" },
   { text: "Settings", icon: <SettingsIcon />, href: "/settings" },
 ];
 
