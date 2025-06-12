@@ -91,14 +91,19 @@ export async function DELETE() {
       )
     }
 
-    console.log('Store API - Deleting store:', store.id)
+    console.log('Store API - Deleting store and all related data:', store.id)
     
-    // Delete the store - this will cascade delete related data
+    // Delete products first to resolve foreign key constraints
+    await prisma.product.deleteMany({
+      where: { storeId: store.id }
+    })
+    
+    // Then delete the store
     await prisma.store.delete({
       where: { id: store.id }
     })
 
-    console.log('Store API - Store disconnected successfully')
+    console.log('Store API - Store and all related data deleted successfully')
     return NextResponse.json({ 
       message: 'Store disconnected successfully',
       deletedStoreId: store.id 
