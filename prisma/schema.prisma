@@ -8,19 +8,20 @@ datasource db {
 }
 
 model Store {
-  id              String           @id @default(uuid())
-  name            String
-  domain          String           @unique
-  accessToken     String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  adSpends        AdSpend[]
-  fixedCosts      FixedCost[]
-  orders          Order[]
-  paymentGateways PaymentGateway[]
-  products        Product[]
-  shippingRules   ShippingRule[]
-  variableCosts   VariableCost[]
+  id                   String                @id @default(uuid())
+  name                 String
+  domain               String                @unique
+  accessToken          String
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  adSpends             AdSpend[]
+  adSpendIntegrations  AdSpendIntegration[]
+  fixedCosts           FixedCost[]
+  orders               Order[]
+  paymentGateways      PaymentGateway[]
+  products             Product[]
+  shippingRules        ShippingRule[]
+  variableCosts        VariableCost[]
 }
 
 model Product {
@@ -182,6 +183,25 @@ model AdSpend {
 
   @@index([storeId])
   @@index([platform, accountId])
+}
+
+model AdSpendIntegration {
+  id           String    @id @default(uuid())
+  storeId      String
+  platform     String    // FACEBOOK, GOOGLE, TIKTOK, etc.
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  accountData  Json?     // Store platform-specific account information
+  isActive     Boolean   @default(true)
+  lastSyncAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  store        Store     @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, platform])
+  @@index([storeId])
+  @@index([platform])
 }
 
 model FixedCost {
