@@ -12,7 +12,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('light')
+  const [theme, setTheme] = useState<Theme>('dark')
 
   useEffect(() => {
     // Check if theme was previously saved
@@ -20,7 +20,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     console.log('Initial theme load:', { savedTheme, systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches })
     if (savedTheme) {
       setTheme(savedTheme)
-    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    } else {
+      // Default to dark mode instead of checking system preference
       setTheme('dark')
     }
   }, [])

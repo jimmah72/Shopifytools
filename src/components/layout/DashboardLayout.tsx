@@ -23,7 +23,9 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import Link from "next/link";
 import ThemeToggle from "@/components/ui/ThemeToggle";
 import { useTheme as useAppTheme } from "@/contexts/ThemeContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { usePathname } from 'next/navigation';
+import LogoutIcon from "@mui/icons-material/Logout";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -41,6 +43,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [mobileMenuAnchor, setMobileMenuAnchor] = useState<null | HTMLElement>(null);
   const theme = useTheme();
   const { theme: appTheme } = useAppTheme();
+  const { logout, user } = useAuth();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const pathname = usePathname();
 
@@ -50,6 +53,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const handleMobileMenuClose = () => {
     setMobileMenuAnchor(null);
+  };
+
+  const handleLogout = () => {
+    logout();
   };
 
   const NavItems = () => (
@@ -110,6 +117,24 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           <Stack direction="row" alignItems="center" spacing={2}>
             <ThemeToggle />
             
+            {/* User Info & Logout */}
+            <Typography variant="body2" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
+              Welcome, {user?.username}
+            </Typography>
+            
+            <Button
+              startIcon={<LogoutIcon />}
+              onClick={handleLogout}
+              sx={{
+                color: 'text.primary',
+                '&:hover': {
+                  bgcolor: appTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                },
+              }}
+            >
+              {isMobile ? '' : 'Logout'}
+            </Button>
+            
             {isMobile && (
               <IconButton
                 color="inherit"
@@ -155,6 +180,25 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             </MenuItem>
           </Link>
         ))}
+        
+        {/* Mobile Logout */}
+        <MenuItem 
+          onClick={() => {
+            handleMobileMenuClose();
+            handleLogout();
+          }}
+          sx={{
+            color: theme.palette.text.primary,
+            py: 1.5,
+            borderTop: `1px solid ${theme.palette.divider}`,
+            mt: 1
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <LogoutIcon />
+            <Typography>Logout</Typography>
+          </Box>
+        </MenuItem>
       </Menu>
 
       <Box
