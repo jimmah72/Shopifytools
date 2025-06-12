@@ -24,22 +24,30 @@ model Store {
 }
 
 model Product {
-  id          String      @id @default(cuid())
-  storeId     String
-  store       Store       @relation(fields: [storeId], references: [id])
-  title       String
-  sku         String?     @unique
-  description String?
-  price       Float
-  cost        Float
-  weight      Float?
-  shippingRuleId String?
-  shippingRule ShippingRule? @relation(fields: [shippingRuleId], references: [id])
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  variants    ProductVariant[]
-  orders      Order[]
-  orderItems  OrderItem[]
+  id              String   @id @default(cuid())
+  storeId         String
+  store           Store    @relation(fields: [storeId], references: [id])
+  title           String
+  image           String?
+  status          String   @default("Active")
+  lastEdited      DateTime @default(now())
+  sellingPrice    Float    @default(0)
+  costOfGoodsSold Float    @default(0)
+  handlingFees    Float    @default(0)
+  miscFees        Float    @default(0)
+  margin          Float    @default(0)
+  sku             String?  @unique
+  description     String?
+  price           Float
+  cost            Float
+  weight          Float?
+  shippingRuleId  String?
+  shippingRule    ShippingRule? @relation(fields: [shippingRuleId], references: [id])
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  variants        ProductVariant[]
+  orders          Order[]
+  orderItems      OrderItem[]
 
   @@index([storeId])
   @@index([shippingRuleId])

@@ -25,6 +25,7 @@ interface Product {
   sellingPrice: number;
   costOfGoodsSold: number;
   handlingFees: number;
+  miscFees: number;
   margin: number;
 }
 
@@ -32,9 +33,10 @@ interface CostOfGoodsTableProps {
   products: Product[];
   onCostUpdate: (productId: string, newCost: number) => void;
   onHandlingFeesUpdate: (productId: string, newFees: number) => void;
+  onMiscFeesUpdate: (productId: string, newFees: number) => void;
 }
 
-export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate }: CostOfGoodsTableProps) {
+export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate, onMiscFeesUpdate }: CostOfGoodsTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const { theme } = useTheme();
@@ -96,10 +98,10 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-700 overflow-hidden bg-gray-950">
+      <div className="rounded-lg border border-gray-600 overflow-hidden bg-gray-900">
         <Table>
-          <TableHeader>
-            <TableRow className="border-b border-gray-800 hover:bg-transparent">
+          <TableHeader className="bg-gray-800">
+            <TableRow className="border-b-2 border-gray-600 hover:bg-transparent">
               <TableHead className="w-[40px] h-10">
                 <input
                   type="checkbox"
@@ -108,19 +110,23 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                   className="rounded border-gray-600 bg-transparent"
                 />
               </TableHead>
-              <TableHead className="font-medium text-gray-400">Products & Variants</TableHead>
-              <TableHead className="font-medium text-gray-400">Status</TableHead>
-              <TableHead className="font-medium text-gray-400">Last Edited</TableHead>
-              <TableHead className="text-right font-medium text-gray-400">Selling Price</TableHead>
-              <TableHead className="font-medium text-gray-400">Source</TableHead>
-              <TableHead className="text-right font-medium text-gray-400">Cost of Goods Sold</TableHead>
-              <TableHead className="text-right font-medium text-gray-400">Handling Fees</TableHead>
-              <TableHead className="text-right font-medium text-gray-400">Margin</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[400px] text-left">Products & Variants</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Status</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Last Edited</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Selling Price</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Source</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Cost of Goods Sold</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Handling Fees</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Misc</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Margin</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {products.map((product) => (
-              <TableRow key={product.id} className="border-b border-gray-800 hover:bg-gray-900/50">
+              <TableRow 
+                key={product.id} 
+                className="border-b border-gray-600 hover:bg-gray-800 transition-colors"
+              >
                 <TableCell className="h-12">
                   <input
                     type="checkbox"
@@ -132,17 +138,17 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                 <TableCell>
                   <div className="flex items-center gap-3">
                     {product.image ? (
-                      <div className="flex-shrink-0">
+                      <div className="flex-shrink-0 relative w-8 h-8">
                         <Image
                           src={product.image}
                           alt={product.title}
-                          width={32}
-                          height={32}
+                          fill
                           className="object-cover rounded"
+                          sizes="32px"
                         />
                       </div>
                     ) : (
-                      <div className="w-8 h-8 bg-gray-800 rounded flex items-center justify-center flex-shrink-0">
+                      <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0">
                         <span className="text-gray-400 text-xs">No img</span>
                       </div>
                     )}
@@ -150,7 +156,7 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/20 font-normal">
+                  <Badge variant="outline" className="bg-green-400 text-black border-0 font-medium">
                     {product.status}
                   </Badge>
                 </TableCell>
@@ -159,11 +165,11 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                   {formatCurrency(product.sellingPrice)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="border-gray-700 text-gray-400 font-normal">
+                  <Badge variant="outline" className="bg-orange-500 text-black border-0 font-medium">
                     MANUAL
                   </Badge>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell>
                   <Input
                     type="number"
                     value={product.costOfGoodsSold}
@@ -172,7 +178,7 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                     step="0.01"
                   />
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell>
                   <Input
                     type="number"
                     value={product.handlingFees}
@@ -181,7 +187,16 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate 
                     step="0.01"
                   />
                 </TableCell>
-                <TableCell className="text-right font-medium text-sm">
+                <TableCell>
+                  <Input
+                    type="number"
+                    value={product.miscFees}
+                    onChange={(e) => onMiscFeesUpdate(product.id, parseFloat(e.target.value))}
+                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                    step="0.01"
+                  />
+                </TableCell>
+                <TableCell className="text-left font-medium text-sm">
                   <span className={
                     product.margin >= 70 ? 'text-green-400' :
                     product.margin >= 50 ? 'text-yellow-400' :
