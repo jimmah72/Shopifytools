@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -48,6 +48,11 @@ interface CostOfGoodsTableProps {
   onMiscFeesUpdate: (productId: string, newFees: number) => void;
   onCostSourceToggle: (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => void;
   onSave: (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number; costSource: string }) => Promise<void>;
+  // Variant expansion props
+  expandedProducts: Set<string>;
+  onToggleExpansion: (productId: string) => void;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
 }
 
 export function CostOfGoodsTable({ 
@@ -56,12 +61,22 @@ export function CostOfGoodsTable({
   onHandlingFeesUpdate, 
   onMiscFeesUpdate, 
   onCostSourceToggle,
-  onSave 
+  onSave,
+  expandedProducts,
+  onToggleExpansion,
+  onExpandAll,
+  onCollapseAll
 }: CostOfGoodsTableProps) {
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
   const [savingProducts, setSavingProducts] = useState<Set<string>>(new Set());
   const { theme } = useTheme();
+
+  // Debug: Log expansion state on first render and when it changes
+  useEffect(() => {
+    console.log('TABLE DEBUG - Expanded products:', Array.from(expandedProducts));
+    console.log('TABLE DEBUG - Products with variants:', products.filter(p => p.variants.length > 1).map(p => ({ id: p.id, title: p.title, variantCount: p.variants.length })));
+  }, [expandedProducts, products]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {

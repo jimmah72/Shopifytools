@@ -94,6 +94,20 @@ export default function ProductsPage() {
   const [costDataFilter, setCostDataFilter] = useState<CostDataFilter>('all');
   const [showFilters, setShowFilters] = useState(false);
   
+  // Variant expansion state with localStorage persistence
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('expandedProducts');
+        return saved ? new Set(JSON.parse(saved)) : new Set();
+      } catch (error) {
+        console.warn('Failed to load expanded products from localStorage:', error);
+        return new Set();
+      }
+    }
+    return new Set();
+  });
+
   const PRODUCTS_PER_PAGE = 20;
 
   // Debounce search term to avoid too many API calls
@@ -189,6 +203,46 @@ export default function ProductsPage() {
       );
     }
   }, [currentPage, debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, fetchProducts]);
+
+  // Save expanded products to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('expandedProducts', JSON.stringify([...expandedProducts]));
+      } catch (error) {
+        console.warn('Failed to save expanded products to localStorage:', error);
+      }
+    }
+  }, [expandedProducts]);
+
+  // Variant expansion handlers
+  const toggleProductExpansion = useCallback((productId: string) => {
+    setExpandedProducts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(productId)) {
+        newSet.delete(productId);
+        console.log('EXPANSION DEBUG - Collapsed product:', productId);
+      } else {
+        newSet.add(productId);
+        console.log('EXPANSION DEBUG - Expanded product:', productId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const isProductExpanded = useCallback((productId: string) => {
+    return expandedProducts.has(productId);
+  }, [expandedProducts]);
+
+  const expandAllProducts = useCallback(() => {
+    setExpandedProducts(new Set(products.map(p => p.id)));
+    console.log('EXPANSION DEBUG - Expanded all products');
+  }, [products]);
+
+  const collapseAllProducts = useCallback(() => {
+    setExpandedProducts(new Set());
+    console.log('EXPANSION DEBUG - Collapsed all products');
+  }, []);
 
   const recalculateMargin = useCallback((product: Product) => {
     const currentCost = product.costSource === 'SHOPIFY' 
@@ -556,6 +610,10 @@ export default function ProductsPage() {
             onMiscFeesUpdate={handleMiscFeesUpdate}
             onCostSourceToggle={handleCostSourceToggle}
             onSave={handleSave}
+            expandedProducts={expandedProducts}
+            onToggleExpansion={toggleProductExpansion}
+            onExpandAll={expandAllProducts}
+            onCollapseAll={collapseAllProducts}
           />
         )}
       </Suspense>
