@@ -1,32 +1,31 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   Box, 
   Typography, 
-  Stack, 
   Button, 
   Grid, 
   Card as MuiCard,
-  CardContent,
-  Avatar,
-  Chip,
   Alert,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  CircularProgress
+  CircularProgress,
+  TextField,
+  Container,
+  Avatar,
+  Stack,
+  Chip
 } from '@mui/material'
 import { 
   Facebook as FacebookIcon,
   Google as GoogleIcon,
-  Instagram as InstagramIcon,
-  LinkedIn as LinkedInIcon,
-  YouTube as YouTubeIcon,
   Pinterest as PinterestIcon
 } from '@mui/icons-material'
 import styled from '@emotion/styled'
+import { styled as muiStyled } from '@mui/material/styles'
 
 const PageContainer = styled(Box)`
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -52,6 +51,9 @@ const ChannelCard = styled(MuiCard)`
   padding: 1.5rem;
   transition: all 0.3s ease;
   border: 1px solid rgba(255, 255, 255, 0.2);
+  height: 280px;
+  display: flex;
+  flex-direction: column;
   
   &:hover {
     transform: translateY(-4px);
@@ -99,6 +101,21 @@ interface MarketingChannel {
   description?: string;
 }
 
+interface ChannelCredentials {
+  [key: string]: string;
+}
+
+interface CredentialsConfig {
+  [key: string]: {
+    fields: {
+      name: string;
+      label: string;
+      type: string;
+      required: boolean;
+    }[];
+  };
+}
+
 // Custom icon components for platforms without Material-UI icons
 const TikTokIcon = (props: any) => (
   <Avatar {...props} sx={{ bgcolor: '#000000', width: 32, height: 32, fontSize: 14, fontWeight: 'bold' }}>
@@ -130,7 +147,7 @@ const marketingChannels: MarketingChannel[] = [
     name: 'Facebook',
     icon: FacebookIcon,
     connected: false,
-    accountCount: 1,
+    accountCount: 0,
     totalAccounts: 2,
     color: '#1877F2',
     description: 'Connect Facebook Ads Manager to track ad spend and performance'
@@ -140,7 +157,7 @@ const marketingChannels: MarketingChannel[] = [
     name: 'Google',
     icon: GoogleIcon,
     connected: false,
-    accountCount: 1,
+    accountCount: 0,
     totalAccounts: 2,
     color: '#4285F4',
     description: 'Connect Google Ads to import campaign data and spending'
@@ -230,6 +247,76 @@ export default function AdSpendPage() {
   const [selectedChannel, setSelectedChannel] = useState<MarketingChannel | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null)
+  const [loadingChannels, setLoadingChannels] = useState<string[]>([])
+  const [credentialsModal, setCredentialsModal] = useState<{
+    open: boolean
+    channel: MarketingChannel | null
+  }>({ open: false, channel: null })
+  const [credentials, setCredentials] = useState<ChannelCredentials>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const credentialsConfig: CredentialsConfig = {
+    facebook: {
+      fields: [
+        { name: 'appId', label: 'App ID', type: 'text', required: true },
+        { name: 'appSecret', label: 'App Secret', type: 'password', required: true },
+        { name: 'accessToken', label: 'Access Token', type: 'password', required: true }
+      ]
+    },
+    google: {
+      fields: [
+        { name: 'clientId', label: 'Client ID', type: 'text', required: true },
+        { name: 'clientSecret', label: 'Client Secret', type: 'password', required: true },
+        { name: 'refreshToken', label: 'Refresh Token', type: 'password', required: true }
+      ]
+    },
+    tiktok: {
+      fields: [
+        { name: 'appId', label: 'App ID', type: 'text', required: true },
+        { name: 'secret', label: 'Secret', type: 'password', required: true },
+        { name: 'accessToken', label: 'Access Token', type: 'password', required: true }
+      ]
+    },
+    taboola: {
+      fields: [
+        { name: 'clientId', label: 'Client ID', type: 'text', required: true },
+        { name: 'clientSecret', label: 'Client Secret', type: 'password', required: true }
+      ]
+    },
+    microsoft: {
+      fields: [
+        { name: 'customerId', label: 'Customer ID', type: 'text', required: true },
+        { name: 'developerToken', label: 'Developer Token', type: 'password', required: true }
+      ]
+    },
+    pinterest: {
+      fields: [
+        { name: 'appId', label: 'App ID', type: 'text', required: true },
+        { name: 'appSecret', label: 'App Secret', type: 'password', required: true }
+      ]
+    },
+    snapchat: {
+      fields: [
+        { name: 'clientId', label: 'Client ID', type: 'text', required: true },
+        { name: 'clientSecret', label: 'Client Secret', type: 'password', required: true }
+      ]
+    },
+    amazon: {
+      fields: [
+        { name: 'clientId', label: 'Client ID', type: 'text', required: true },
+        { name: 'clientSecret', label: 'Client Secret', type: 'password', required: true }
+      ]
+    },
+    x: {
+      fields: [
+        { name: 'apiKey', label: 'API Key', type: 'text', required: true },
+        { name: 'apiSecret', label: 'API Secret', type: 'password', required: true },
+        { name: 'accessToken', label: 'Access Token', type: 'password', required: true },
+        { name: 'accessTokenSecret', label: 'Access Token Secret', type: 'password', required: true }
+      ]
+    }
+  }
 
   // Handle URL parameters for connection status
   useEffect(() => {
@@ -288,11 +375,72 @@ export default function AdSpendPage() {
   }, [])
 
   const handleConnect = (channel: MarketingChannel) => {
-    if (channel.comingSoon) {
-      return
+    setCredentialsModal({ open: true, channel })
+    setCredentials({})
+    setError(null)
+  }
+
+  const handleCredentialChange = (fieldName: string, value: string) => {
+    setCredentials(prev => ({
+      ...prev,
+      [fieldName]: value
+    }))
+  }
+
+  const handleSaveCredentials = async () => {
+    if (!credentialsModal.channel) return
+
+    const config = credentialsConfig[credentialsModal.channel.id]
+    if (!config) return
+
+    // Validate required fields
+    for (const field of config.fields) {
+      if (field.required && !credentials[field.name]) {
+        setError(`${field.label} is required`)
+        return
+      }
     }
-    setSelectedChannel(channel)
-    setConnectDialogOpen(true)
+
+    setSaving(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/ad-credentials', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          platform: credentialsModal.channel.id,
+          credentials: credentials
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to save credentials')
+      }
+
+      setCredentialsModal({ open: false, channel: null })
+      setStatusMessage({ 
+        type: 'success', 
+        message: `${credentialsModal.channel.name} credentials saved successfully!` 
+      })
+      
+      // Update the channel connection status
+      // You might want to refresh the channel data here
+      
+    } catch (error) {
+      console.error('Error saving credentials:', error)
+      setError('Failed to save credentials. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCloseCredentialsModal = () => {
+    setCredentialsModal({ open: false, channel: null })
+    setCredentials({})
+    setError(null)
   }
 
   const handleManage = (channel: MarketingChannel) => {
@@ -419,25 +567,84 @@ export default function AdSpendPage() {
             return (
               <Grid item xs={12} md={6} lg={4} key={channel.id}>
                 <ChannelCard>
-                  <CardContent>
-                    <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
-                      <IconComponent sx={{ color: channel.color, fontSize: 32 }} />
-                      <Box sx={{ flexGrow: 1 }}>
-                        <Typography variant="h6" fontWeight="600">
-                          {channel.name}
-                        </Typography>
-                        {getStatusChip(channel)}
-                      </Box>
-                    </Stack>
-                    
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <Box sx={{ 
+                      width: 48, 
+                      height: 48, 
+                      borderRadius: 2, 
+                      backgroundColor: channel.color,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mr: 2
+                    }}>
+                      <IconComponent sx={{ color: 'white', fontSize: 24 }} />
+                    </Box>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 600, color: '#1a1a1a' }}>
+                        {channel.name}
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          color: channel.connected ? '#4caf50' : '#666',
+                          fontWeight: 500
+                        }}
+                      >
+                        {channel.accountCount}/{channel.totalAccounts} accounts
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" sx={{ color: '#666', mb: 3 }}>
                       {channel.description}
                     </Typography>
-                    
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      {getActionButton(channel)}
-                    </Box>
-                  </CardContent>
+                  </Box>
+
+                  <Box sx={{ mt: 'auto' }}>
+                    {channel.comingSoon ? (
+                      <Button
+                        variant="outlined"
+                        disabled
+                        sx={{ 
+                          width: '100%',
+                          textTransform: 'none',
+                          borderRadius: 2,
+                          py: 1
+                        }}
+                      >
+                        Coming Soon
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={channel.connected ? "outlined" : "contained"}
+                        onClick={() => channel.connected ? handleManage(channel) : handleConnect(channel)}
+                        disabled={loadingChannels.includes(channel.id)}
+                        sx={{ 
+                          width: '100%',
+                          backgroundColor: channel.connected ? 'transparent' : channel.color,
+                          borderColor: channel.color,
+                          color: channel.connected ? channel.color : 'white',
+                          textTransform: 'none',
+                          borderRadius: 2,
+                          py: 1,
+                          '&:hover': {
+                            backgroundColor: channel.connected 
+                              ? `${channel.color}15` 
+                              : `${channel.color}dd`,
+                            borderColor: channel.color
+                          }
+                        }}
+                      >
+                        {loadingChannels.includes(channel.id) ? (
+                          <CircularProgress size={20} color="inherit" />
+                        ) : (
+                          channel.connected ? 'Manage' : 'Connect'
+                        )}
+                      </Button>
+                    )}
+                  </Box>
                 </ChannelCard>
               </Grid>
             )
@@ -468,7 +675,7 @@ export default function AdSpendPage() {
           <Stack direction="row" alignItems="center" spacing={2}>
             {selectedChannel && (
               <>
-                <selectedChannel.icon sx={{ color: selectedChannel.color, fontSize: 32 }} />
+                {React.createElement(selectedChannel.icon, { sx: { color: selectedChannel.color, fontSize: 32 } })}
                 <Typography variant="h6">
                   Connect {selectedChannel.name}
                 </Typography>
@@ -516,6 +723,93 @@ export default function AdSpendPage() {
             startIcon={connecting ? <CircularProgress size={16} /> : null}
           >
             {connecting ? 'Connecting...' : `Connect ${selectedChannel?.name}`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Credentials Modal */}
+      <Dialog 
+        open={credentialsModal.open} 
+        onClose={handleCloseCredentialsModal}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {credentialsModal.channel && (
+              <>
+                <Box sx={{ 
+                  width: 40, 
+                  height: 40, 
+                  borderRadius: 2, 
+                  backgroundColor: credentialsModal.channel.color,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  {React.createElement(credentialsModal.channel.icon, { sx: { color: 'white', fontSize: 20 } })}
+                </Box>
+                Connect {credentialsModal.channel.name}
+              </>
+            )}
+          </Box>
+        </DialogTitle>
+        
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 3, color: '#666' }}>
+            Enter your API credentials to connect your {credentialsModal.channel?.name} account.
+          </Typography>
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          {credentialsModal.channel && credentialsConfig[credentialsModal.channel.id] && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {credentialsConfig[credentialsModal.channel.id].fields.map((field) => (
+                <TextField
+                  key={field.name}
+                  label={field.label}
+                  type={field.type}
+                  value={credentials[field.name] || ''}
+                  onChange={(e) => handleCredentialChange(field.name, e.target.value)}
+                  required={field.required}
+                  fullWidth
+                  variant="outlined"
+                />
+              ))}
+            </Box>
+          )}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 3 }}>
+          <Button 
+            onClick={handleCloseCredentialsModal}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSaveCredentials}
+            variant="contained"
+            disabled={saving}
+            sx={{
+              backgroundColor: credentialsModal.channel?.color,
+              '&:hover': {
+                backgroundColor: credentialsModal.channel ? `${credentialsModal.channel.color}dd` : undefined
+              }
+            }}
+          >
+            {saving ? (
+              <>
+                <CircularProgress size={16} sx={{ mr: 1 }} />
+                Saving...
+              </>
+            ) : (
+              'Save Credentials'
+            )}
           </Button>
         </DialogActions>
       </Dialog>
