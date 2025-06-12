@@ -20,6 +20,15 @@ import {
 import { Search, FilterList, Sort } from '@mui/icons-material';
 import { useDebounce } from '@/hooks/useDebounce';
 
+interface Variant {
+  id: string;
+  price: number;
+  inventory_cost: number;
+  sku: string;
+  inventory_quantity: number;
+  inventory_tracked: boolean;
+}
+
 interface Product {
   id: string;
   title: string;
@@ -34,6 +43,7 @@ interface Product {
   costSource: 'SHOPIFY' | 'MANUAL';
   shopifyCostOfGoodsSold?: number | null;
   shopifyHandlingFees?: number;
+  variants: Variant[];
 }
 
 interface ProductsResponse {
@@ -136,8 +146,14 @@ export default function ProductsPage() {
         margin: product.margin,
         costSource: product.costSource,
         shopifyCostOfGoodsSold: product.shopifyCostOfGoodsSold, // Preserve null values - don't default to 0
-        shopifyHandlingFees: product.shopifyHandlingFees || 0
+        shopifyHandlingFees: product.shopifyHandlingFees || 0,
+        variants: product.variants || []
       }));
+      
+      // Temporary: Log first product's variants to verify data flow
+      if (transformedProducts.length > 0) {
+        console.log('VARIANT DEBUG - First product variants:', transformedProducts[0].variants);
+      }
       
       setProducts(transformedProducts);
       setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));

@@ -15,6 +15,15 @@ import { Badge } from '@/components/ui/badge';
 import Image from 'next/image';
 import { useTheme } from '@/contexts/ThemeContext';
 
+interface Variant {
+  id: string;
+  price: number;
+  inventory_cost: number;
+  sku: string;
+  inventory_quantity: number;
+  inventory_tracked: boolean;
+}
+
 interface Product {
   id: string;
   title: string;
@@ -29,6 +38,7 @@ interface Product {
   costSource: 'SHOPIFY' | 'MANUAL';
   shopifyCostOfGoodsSold?: number | null;
   shopifyHandlingFees?: number;
+  variants: Variant[];
 }
 
 interface CostOfGoodsTableProps {
