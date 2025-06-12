@@ -110,12 +110,20 @@ export async function GET(request: NextRequest) {
       console.log('Products API - Filtered products by search:', filteredProducts.length);
     }
 
-    // Fetch cost data for ALL filtered products if requested (needed for filtering by cost data)
+    // Only fetch cost data for ALL products if we need to filter by cost data availability
+    // Otherwise, fetch cost data only for the current page to improve performance
+    const needsCostDataForFiltering = costDataFilter && costDataFilter !== 'all';
+    
     let costData: Record<string, number> = {};
     if (fetchCosts && filteredProducts.length > 0) {
-      console.log('Products API - Fetching cost data for all filtered products');
-      const productIds = filteredProducts.map((product: ShopifyProduct) => product.id);
-      costData = await getProductsCostData(formattedDomain, store.accessToken, productIds);
+      if (needsCostDataForFiltering) {
+        console.log('Products API - Fetching cost data for all filtered products (needed for cost filtering)');
+        const productIds = filteredProducts.map((product: ShopifyProduct) => product.id);
+        costData = await getProductsCostData(formattedDomain, store.accessToken, productIds);
+      } else {
+        console.log('Products API - Will fetch cost data only for current page products (no cost filtering needed)');
+        // We'll fetch cost data after pagination for better performance
+      }
     }
 
     // Fetch existing database records for ALL filtered products
@@ -312,6 +320,30 @@ export async function GET(request: NextRequest) {
       endIndex,
       returnedProducts: paginatedProducts.length
     });
+
+    // If we didn't fetch cost data for all products (no cost filtering), fetch it now for current page only
+    if (fetchCosts && !needsCostDataForFiltering && paginatedProducts.length > 0) {
+      console.log('Products API - Fetching cost data for current page products only');
+      const pageProductIds = paginatedProducts.map(product => 
+        `gid://shopify/Product/${product.id}`
+      );
+      const pageCostData = await getProductsCostData(formattedDomain, store.accessToken, pageProductIds);
+      
+      // Update the paginated products with the cost data
+      paginatedProducts.forEach(product => {
+        const shopifyInventoryCost = pageCostData[product.id];
+        if (shopifyInventoryCost !== undefined) {
+          product.shopifyCostOfGoodsSold = shopifyInventoryCost;
+          
+          // Recalculate cost and margin if using Shopify source
+          if (product.costSource === 'SHOPIFY') {
+            product.costOfGoodsSold = shopifyInventoryCost || 0;
+            const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
+            product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+          }
+        }
+      });
+    }
 
     console.log('Products API - Successfully transformed products')
     

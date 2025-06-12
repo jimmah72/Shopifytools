@@ -1027,8 +1027,8 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
   
   const costMap: Record<string, number> = {};
 
-  // Process products in small batches to avoid overwhelming the API
-  const batchSize = 5;
+  // Process products in larger batches for better performance
+  const batchSize = 50;
   for (let i = 0; i < productIds.length; i += batchSize) {
     const batch = productIds.slice(i, i + batchSize);
     console.log(`Shopify API - Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)} (${batch.length} products)`);
@@ -1131,7 +1131,7 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
 
     // Small delay between batches to be respectful to the API
     if (i + batchSize < productIds.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
 
