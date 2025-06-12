@@ -169,7 +169,9 @@ export function CostOfGoodsTable({
   };
 
   const isShopifyCostAvailable = (product: Product) => {
-    return product.shopifyCostOfGoodsSold !== undefined && product.shopifyCostOfGoodsSold > 0;
+    // Cost data is available if shopifyCostOfGoodsSold is defined (even if 0)
+    // 0 is a valid cost value from Shopify
+    return product.shopifyCostOfGoodsSold !== undefined;
   };
 
   return (

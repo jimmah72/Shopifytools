@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getProductsWithInventoryCosts } from '@/lib/shopify-api'
+import { getAllProducts, getProductsCostData } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
 // Mark route as dynamic
@@ -20,7 +20,8 @@ interface ShopifyVariant {
   price: string;
   cost_per_item?: string;
   sku?: string;
-  inventory_cost?: string;
+  inventory_quantity?: number;
+  inventory_item_id?: string;
 }
 
 export async function GET(request: NextRequest) {
@@ -53,20 +54,13 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const search = searchParams.get('search') || ''
+    const fetchCosts = searchParams.get('fetchCosts') === 'true' // New parameter
     
-    console.log('Products API - Query params:', { page, limit, search })
+    console.log('Products API - Query params:', { page, limit, search, fetchCosts })
     
-    // For better performance, we'll use a smaller default limit
-    const actualLimit = Math.min(limit, 50) // Cap at 50 products per request
-    
-    // Fetch products from Shopify with inventory costs
-    console.log('Products API - Fetching products from Shopify with inventory costs')
-    const shopifyProducts = (await getProductsWithInventoryCosts(formattedDomain, store.accessToken, { 
-      limit: actualLimit,
-      // Note: Shopify's REST API doesn't support offset pagination well
-      // For now, we'll fetch a reasonable amount and implement client-side pagination
-      // In production, consider using GraphQL API for better pagination
-    })) as ShopifyProduct[]
+    // Fetch ALL products from Shopify using efficient pagination
+    console.log('Products API - Fetching ALL products from Shopify with basic data')
+    const shopifyProducts = await getAllProducts(formattedDomain, store.accessToken);
 
     console.log('Products API - Total Shopify products fetched:', shopifyProducts.length)
 
@@ -74,7 +68,7 @@ export async function GET(request: NextRequest) {
     let filteredProducts = shopifyProducts;
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredProducts = shopifyProducts.filter(product => 
+      filteredProducts = shopifyProducts.filter((product: ShopifyProduct) => 
         product.title.toLowerCase().includes(searchLower) ||
         product.handle.toLowerCase().includes(searchLower) ||
         product.variants.some(variant => 
@@ -84,11 +78,13 @@ export async function GET(request: NextRequest) {
       console.log('Products API - Filtered products by search:', filteredProducts.length);
     }
 
-    // Implement client-side pagination
+    // Now we have exact totals since we fetched all products
     const totalProducts = filteredProducts.length;
-    const totalPages = Math.ceil(totalProducts / actualLimit);
-    const startIndex = (page - 1) * actualLimit;
-    const endIndex = startIndex + actualLimit;
+    const totalPages = Math.ceil(totalProducts / limit);
+    
+    // Client-side pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
     const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
 
     console.log('Products API - Pagination:', {
@@ -100,50 +96,71 @@ export async function GET(request: NextRequest) {
       returnedProducts: paginatedProducts.length
     });
 
-    // Transform products with simple defaults (no database lookup)
-    const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
-      return {
-        ...shopifyProduct,
-        // Add simple default database fields
-        dbCostOfGoodsSold: 0,
-        dbHandlingFees: 0,
-        dbMiscFees: 0,
-        dbCostSource: 'MANUAL',
-        dbLastEdited: new Date(),
-        variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
-          const inventoryCost = variant.inventory_cost ? parseFloat(variant.inventory_cost) : null
-          const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
-          const finalShopifyCost = inventoryCost || shopifyCost
-          
-          // Try to use Shopify's cost if available and valid
-          if (finalShopifyCost !== null && !isNaN(finalShopifyCost) && finalShopifyCost > 0) {
-            return {
-              ...variant,
-              cost: finalShopifyCost,
-              costSource: 'SHOPIFY',
-              costLastUpdated: new Date()
-            }
-          }
-          
-          // Default to manual mode with 0 cost
-          return {
-            ...variant,
-            cost: 0,
-            costSource: 'MANUAL',
-            costLastUpdated: new Date()
-          }
-        })
-      }
-    })
+    // Fetch cost data for products on current page if requested
+    let costData: Record<string, number> = {};
+    if (fetchCosts && paginatedProducts.length > 0) {
+      console.log('Products API - Fetching cost data for current page products');
+      const productIds = paginatedProducts.map((product: ShopifyProduct) => product.id);
+      costData = await getProductsCostData(formattedDomain, store.accessToken, productIds);
+    }
 
-    console.log('Products API - Successfully fetched and transformed products')
+    // Transform products to our format with SHOPIFY as default source
+    const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
+      const variant = shopifyProduct.variants[0] || {};
+      const price = parseFloat(variant.price) || 0;
+      
+      // Get Shopify inventory cost - use fetched cost data if available
+      const shopifyInventoryCost = fetchCosts ? (costData[shopifyProduct.id] || 0) : 0;
+      
+      // Default ALL products to SHOPIFY source as requested
+      const costSource = 'SHOPIFY';
+      const costOfGoodsSold = shopifyInventoryCost;
+      const handlingFees = 0; // Shopify doesn't have handling fees
+      const miscFees = 0; // Start with 0, user can edit
+      
+      // Calculate margin
+      const totalCost = costOfGoodsSold + handlingFees + miscFees;
+      const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
+      
+      return {
+        id: shopifyProduct.id,
+        title: shopifyProduct.title,
+        image: shopifyProduct.images?.[0]?.src || '',
+        status: 'Active' as const,
+        lastEdited: new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        }),
+        sellingPrice: price,
+        costOfGoodsSold: costOfGoodsSold,
+        handlingFees: handlingFees,
+        miscFees: miscFees,
+        margin: margin,
+        costSource: costSource,
+        shopifyCostOfGoodsSold: shopifyInventoryCost, // Always include Shopify cost for reference
+        shopifyHandlingFees: 0, // Shopify doesn't have handling fees
+        sku: variant.sku || '',
+        inventoryQuantity: variant.inventory_quantity || 0,
+        variants: shopifyProduct.variants.map(v => ({
+          id: v.id,
+          price: parseFloat(v.price) || 0,
+          inventory_cost: fetchCosts ? (costData[shopifyProduct.id] || 0) : 0,
+          sku: v.sku || '',
+          inventory_quantity: v.inventory_quantity || 0,
+          inventory_tracked: (v as any).inventory_tracked || false
+        }))
+      };
+    });
+
+    console.log('Products API - Successfully transformed products')
     
     return NextResponse.json({ 
       products,
       total: totalProducts,
       page,
       totalPages,
-      limit: actualLimit
+      limit: limit
     })
 
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getOrders } from '@/lib/shopify-api'
+import { getAllOrders } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
 // Mark route as dynamic
@@ -103,35 +103,42 @@ export async function GET(request: NextRequest) {
     const formattedDomain = formatShopDomain(store.domain)
     console.log('Orders API - Formatted domain:', formattedDomain)
 
-    // Build Shopify API options
-    const shopifyOptions: any = {
-      limit: Math.min(limit, 250), // Shopify max is 250
-      status: status !== 'any' ? status : undefined,
-    }
-
-    if (financial_status) {
-      shopifyOptions.financial_status = financial_status
-    }
-    if (fulfillment_status) {
-      shopifyOptions.fulfillment_status = fulfillment_status
-    }
-    if (created_at_min) {
-      shopifyOptions.created_at_min = created_at_min
-    }
-    if (created_at_max) {
-      shopifyOptions.created_at_max = created_at_max
-    }
-
-    console.log('Orders API - Shopify options:', shopifyOptions)
-
-    // Fetch orders from Shopify
-    console.log('Orders API - Fetching orders from Shopify')
-    const shopifyOrders = (await getOrders(formattedDomain, store.accessToken, shopifyOptions)) as ShopifyOrder[]
+    // Fetch ALL orders from Shopify using efficient pagination
+    console.log('Orders API - Fetching ALL orders from Shopify (last 30 days)')
+    const shopifyOrders = (await getAllOrders(formattedDomain, store.accessToken)) as ShopifyOrder[]
 
     console.log('Orders API - Total Shopify orders fetched:', shopifyOrders.length)
 
+    // Filter orders based on query parameters
+    let filteredOrders = shopifyOrders;
+    
+    if (status !== 'any') {
+      // Note: 'status' in the UI typically maps to financial_status in Shopify
+      filteredOrders = filteredOrders.filter(order => order.financial_status === status);
+    }
+    
+    if (financial_status) {
+      filteredOrders = filteredOrders.filter(order => order.financial_status === financial_status);
+    }
+    
+    if (fulfillment_status) {
+      filteredOrders = filteredOrders.filter(order => order.fulfillment_status === fulfillment_status);
+    }
+    
+    if (created_at_min) {
+      const minDate = new Date(created_at_min);
+      filteredOrders = filteredOrders.filter(order => new Date(order.created_at) >= minDate);
+    }
+    
+    if (created_at_max) {
+      const maxDate = new Date(created_at_max);
+      filteredOrders = filteredOrders.filter(order => new Date(order.created_at) <= maxDate);
+    }
+
+    console.log('Orders API - Filtered orders:', filteredOrders.length)
+
     // Transform Shopify orders to our format
-    const orders = shopifyOrders.map((order: ShopifyOrder) => {
+    const orders = filteredOrders.map((order: ShopifyOrder) => {
       const shippingCost = order.total_shipping_price_set?.shop_money?.amount 
         ? parseFloat(order.total_shipping_price_set.shop_money.amount)
         : 0

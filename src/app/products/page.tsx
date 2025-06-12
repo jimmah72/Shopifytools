@@ -60,46 +60,22 @@ export default function ProductsPage() {
   // Debounce search term to avoid too many API calls
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  // Transform Shopify products into our format
+  // The API now returns products in the correct format, so just ensure proper typing
   const transformProduct = useCallback((product: any): Product => {
-    const variant = product.variants[0] || {};
-    const shopifyCost = variant.cost || 0;
-    const price = parseFloat(variant.price) || 0;
-    
-    // Get database values if they exist, otherwise use Shopify values
-    const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
-    const dbHandlingFees = product.dbHandlingFees || 0;
-    const dbMiscFees = product.dbMiscFees || 0;
-    const costSource = product.dbCostSource || 'MANUAL';
-    
-    // Calculate margin based on current source
-    const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
-    const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees;
-    const totalCost = currentCost + currentHandling + dbMiscFees;
-    const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
-    
-    // Format the date to be more readable
-    const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
-    const formattedDate = lastEdited.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-    
     return {
-      id: product.id,
+      id: product.id.toString(),
       title: product.title,
-      image: product.images?.[0]?.src,
-      status: 'Active' as const,
-      lastEdited: formattedDate,
-      sellingPrice: price,
-      costOfGoodsSold: dbCostOfGoodsSold,
-      handlingFees: dbHandlingFees,
-      miscFees: dbMiscFees,
-      margin: margin,
-      costSource: costSource as 'SHOPIFY' | 'MANUAL',
-      shopifyCostOfGoodsSold: shopifyCost,
-      shopifyHandlingFees: 0
+      image: product.image,
+      status: product.status || 'Active',
+      lastEdited: product.lastEdited,
+      sellingPrice: product.sellingPrice,
+      costOfGoodsSold: product.costOfGoodsSold,
+      handlingFees: product.handlingFees,
+      miscFees: product.miscFees,
+      margin: product.margin,
+      costSource: product.costSource,
+      shopifyCostOfGoodsSold: product.shopifyCostOfGoodsSold || 0,
+      shopifyHandlingFees: product.shopifyHandlingFees || 0
     };
   }, []);
 
@@ -111,6 +87,7 @@ export default function ProductsPage() {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: PRODUCTS_PER_PAGE.toString(),
+        fetchCosts: 'true', // Always fetch cost data for current page
         ...(search && { search })
       });
       
@@ -203,20 +180,6 @@ export default function ProductsPage() {
     );
   }, [recalculateMargin]);
 
-  const handleCostSourceToggle = useCallback((productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
-    setProducts(prevProducts => 
-      prevProducts.map(p => 
-        p.id === productId 
-          ? {
-              ...p,
-              costSource: newSource,
-              margin: recalculateMargin({ ...p, costSource: newSource })
-            }
-          : p
-      )
-    );
-  }, [recalculateMargin]);
-
   const handleSave = useCallback(async (productId: string, costs: { 
     costOfGoodsSold: number; 
     handlingFees: number; 
@@ -257,6 +220,48 @@ export default function ProductsPage() {
       throw err;
     }
   }, []);
+
+  const handleCostSourceToggle = useCallback(async (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
+    // Update local state immediately for responsive UI
+    setProducts(prevProducts => 
+      prevProducts.map(p => 
+        p.id === productId 
+          ? {
+              ...p,
+              costSource: newSource,
+              margin: recalculateMargin({ ...p, costSource: newSource })
+            }
+          : p
+      )
+    );
+
+    // Save the cost source change to the database
+    try {
+      const product = products.find(p => p.id === productId);
+      if (product) {
+        await handleSave(productId, {
+          costOfGoodsSold: product.costOfGoodsSold,
+          handlingFees: product.handlingFees,
+          miscFees: product.miscFees,
+          costSource: newSource
+        });
+      }
+    } catch (error) {
+      console.error('Failed to save cost source change:', error);
+      // Revert the local state change if save failed
+      setProducts(prevProducts => 
+        prevProducts.map(p => 
+          p.id === productId 
+            ? {
+                ...p,
+                costSource: newSource === 'SHOPIFY' ? 'MANUAL' : 'SHOPIFY',
+                margin: recalculateMargin({ ...p, costSource: newSource === 'SHOPIFY' ? 'MANUAL' : 'SHOPIFY' })
+              }
+            : p
+        )
+      );
+    }
+  }, [recalculateMargin, products, handleSave]);
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
