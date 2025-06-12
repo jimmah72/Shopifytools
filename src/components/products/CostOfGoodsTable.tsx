@@ -34,11 +34,14 @@ interface CostOfGoodsTableProps {
   onCostUpdate: (productId: string, newCost: number) => void;
   onHandlingFeesUpdate: (productId: string, newFees: number) => void;
   onMiscFeesUpdate: (productId: string, newFees: number) => void;
+  onSave: (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number }) => Promise<void>;
 }
 
-export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate, onMiscFeesUpdate }: CostOfGoodsTableProps) {
+export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate, onMiscFeesUpdate, onSave }: CostOfGoodsTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+  const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
+  const [savingProducts, setSavingProducts] = useState<Set<string>>(new Set());
   const { theme } = useTheme();
 
   const formatCurrency = (amount: number) => {
@@ -65,6 +68,54 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
       newSelected.add(productId);
     }
     setSelectedProducts(newSelected);
+  };
+
+  const markAsChanged = (productId: string) => {
+    setUnsavedChanges(prev => new Set([...prev, productId]));
+  };
+
+  const handleCostChange = (productId: string, newCost: number) => {
+    onCostUpdate(productId, newCost);
+    markAsChanged(productId);
+  };
+
+  const handleHandlingFeesChange = (productId: string, newFees: number) => {
+    onHandlingFeesUpdate(productId, newFees);
+    markAsChanged(productId);
+  };
+
+  const handleMiscFeesChange = (productId: string, newFees: number) => {
+    onMiscFeesUpdate(productId, newFees);
+    markAsChanged(productId);
+  };
+
+  const handleSave = async (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    setSavingProducts(prev => new Set([...prev, productId]));
+    
+    try {
+      await onSave(productId, {
+        costOfGoodsSold: product.costOfGoodsSold,
+        handlingFees: product.handlingFees,
+        miscFees: product.miscFees
+      });
+      
+      setUnsavedChanges(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(productId);
+        return newSet;
+      });
+    } catch (error) {
+      console.error('Error saving product:', error);
+    } finally {
+      setSavingProducts(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(productId);
+        return newSet;
+      });
+    }
   };
 
   return (
@@ -119,13 +170,16 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
               <TableHead className="font-medium text-gray-400 w-[130px] text-left">Handling Fees</TableHead>
               <TableHead className="font-medium text-gray-400 w-[130px] text-left">Misc</TableHead>
               <TableHead className="font-medium text-gray-400 w-[100px] text-left">Margin</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {products.map((product) => (
               <TableRow 
                 key={product.id} 
-                className="border-b border-gray-600 hover:bg-gray-800 transition-colors"
+                className={`border-b border-gray-600 hover:bg-gray-800 transition-colors ${
+                  unsavedChanges.has(product.id) ? 'bg-yellow-900/20' : ''
+                }`}
               >
                 <TableCell className="h-12">
                   <input
@@ -173,27 +227,27 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
                   <Input
                     type="number"
                     value={product.costOfGoodsSold}
-                    onChange={(e) => onCostUpdate(product.id, parseFloat(e.target.value))}
+                    onChange={(e) => handleCostChange(product.id, parseFloat(e.target.value) || 0)}
                     className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="0.01"
+                    step="1"
                   />
                 </TableCell>
                 <TableCell>
                   <Input
                     type="number"
                     value={product.handlingFees}
-                    onChange={(e) => onHandlingFeesUpdate(product.id, parseFloat(e.target.value))}
+                    onChange={(e) => handleHandlingFeesChange(product.id, parseFloat(e.target.value) || 0)}
                     className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="0.01"
+                    step="1"
                   />
                 </TableCell>
                 <TableCell>
                   <Input
                     type="number"
                     value={product.miscFees}
-                    onChange={(e) => onMiscFeesUpdate(product.id, parseFloat(e.target.value))}
+                    onChange={(e) => handleMiscFeesChange(product.id, parseFloat(e.target.value) || 0)}
                     className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="0.01"
+                    step="1"
                   />
                 </TableCell>
                 <TableCell className="text-left font-medium text-sm">
@@ -204,6 +258,17 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
                   }>
                     {product.margin.toFixed(2)}%
                   </span>
+                </TableCell>
+                <TableCell>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSave(product.id)}
+                    disabled={!unsavedChanges.has(product.id) || savingProducts.has(product.id)}
+                    className="h-8 px-3 text-xs"
+                  >
+                    {savingProducts.has(product.id) ? 'Saving...' : 'Save'}
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}

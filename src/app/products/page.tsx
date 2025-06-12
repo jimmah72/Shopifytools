@@ -13,6 +13,7 @@ interface Product {
   sellingPrice: number;
   costOfGoodsSold: number;
   handlingFees: number;
+  miscFees: number;
   margin: number;
 }
 
@@ -54,6 +55,7 @@ export default function ProductsPage() {
           sellingPrice: price,
           costOfGoodsSold: cost,
           handlingFees: 0, // This can be enhanced later
+          miscFees: 0, // This can be enhanced later
           margin: margin
         };
       });
@@ -71,51 +73,24 @@ export default function ProductsPage() {
     fetchProducts();
   }, []);
 
-  const handleCostUpdate = async (productId: string, newCost: number) => {
-    try {
-      // Find the variant ID from the product
-      const product = products.find(p => p.id === productId);
-      if (!product) return;
-
-      // Update the product in the UI optimistically
-      setProducts(prevProducts => 
-        prevProducts.map(p => 
-          p.id === productId 
-            ? {
-                ...p,
-                costOfGoodsSold: newCost,
-                margin: p.sellingPrice > 0 
-                  ? ((p.sellingPrice - newCost) / p.sellingPrice) * 100 
-                  : 0
-              }
-            : p
-        )
-      );
-
-      // Update the cost in the backend
-      const response = await fetch(`/api/products/${productId}/variants/${productId}/cost`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          cost: newCost,
-          source: 'MANUAL'
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update cost');
-      }
-    } catch (err) {
-      console.error('Error updating cost:', err);
-      // Revert the optimistic update on error
-      fetchProducts();
-    }
+  // Local state updates (don't persist until save)
+  const handleCostUpdate = (productId: string, newCost: number) => {
+    setProducts(prevProducts => 
+      prevProducts.map(p => 
+        p.id === productId 
+          ? {
+              ...p,
+              costOfGoodsSold: newCost,
+              margin: p.sellingPrice > 0 
+                ? ((p.sellingPrice - newCost - p.handlingFees - p.miscFees) / p.sellingPrice) * 100 
+                : 0
+            }
+          : p
+      )
+    );
   };
 
-  const handleHandlingFeesUpdate = async (productId: string, newFees: number) => {
-    // For now, just update the UI since we don't have a backend endpoint for handling fees yet
+  const handleHandlingFeesUpdate = (productId: string, newFees: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
         p.id === productId 
@@ -123,12 +98,65 @@ export default function ProductsPage() {
               ...p,
               handlingFees: newFees,
               margin: p.sellingPrice > 0 
-                ? ((p.sellingPrice - p.costOfGoodsSold - newFees) / p.sellingPrice) * 100 
+                ? ((p.sellingPrice - p.costOfGoodsSold - newFees - p.miscFees) / p.sellingPrice) * 100 
                 : 0
             }
           : p
       )
     );
+  };
+
+  const handleMiscFeesUpdate = (productId: string, newFees: number) => {
+    setProducts(prevProducts => 
+      prevProducts.map(p => 
+        p.id === productId 
+          ? {
+              ...p,
+              miscFees: newFees,
+              margin: p.sellingPrice > 0 
+                ? ((p.sellingPrice - p.costOfGoodsSold - p.handlingFees - newFees) / p.sellingPrice) * 100 
+                : 0
+            }
+          : p
+      )
+    );
+  };
+
+  // Save to our database only
+  const handleSave = async (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number }) => {
+    try {
+      const response = await fetch(`/api/products/${productId}/costs`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(costs),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save costs');
+      }
+
+      // Update the lastEdited date for this product
+      setProducts(prevProducts => 
+        prevProducts.map(p => 
+          p.id === productId 
+            ? {
+                ...p,
+                lastEdited: new Date().toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })
+              }
+            : p
+        )
+      );
+    } catch (err) {
+      console.error('Error saving costs:', err);
+      setError(err instanceof Error ? err.message : 'Failed to save costs');
+      throw err; // Re-throw so the component can handle the error
+    }
   };
 
   if (error) {
@@ -158,6 +186,8 @@ export default function ProductsPage() {
           products={products}
           onCostUpdate={handleCostUpdate}
           onHandlingFeesUpdate={handleHandlingFeesUpdate}
+          onMiscFeesUpdate={handleMiscFeesUpdate}
+          onSave={handleSave}
         />
       )}
     </Box>

@@ -4,132 +4,134 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("SUPABASE_DIRECT_URL")
+  url      = env("SUPABASE_DIRECT_URL")
 }
 
 model Store {
-  id            String    @id @default(uuid())
-  name          String
-  domain        String    @unique
-  accessToken   String
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  orders        Order[]
-  products      Product[]
-  adSpends      AdSpend[]
-  shippingRules ShippingRule[]
+  id              String           @id @default(uuid())
+  name            String
+  domain          String           @unique
+  accessToken     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  adSpends        AdSpend[]
+  fixedCosts      FixedCost[]
+  orders          Order[]
   paymentGateways PaymentGateway[]
-  fixedCosts    FixedCost[]
-  variableCosts VariableCost[]
+  products        Product[]
+  shippingRules   ShippingRule[]
+  variableCosts   VariableCost[]
 }
 
 model Product {
-  id              String   @id @default(cuid())
+  id              String           @id @default(cuid())
+  shopifyId       String?          @unique
   storeId         String
-  store           Store    @relation(fields: [storeId], references: [id])
   title           String
-  image           String?
-  status          String   @default("Active")
-  lastEdited      DateTime @default(now())
-  sellingPrice    Float    @default(0)
-  costOfGoodsSold Float    @default(0)
-  handlingFees    Float    @default(0)
-  miscFees        Float    @default(0)
-  margin          Float    @default(0)
-  sku             String?  @unique
   description     String?
   price           Float
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  sku             String?          @unique
   cost            Float
-  weight          Float?
   shippingRuleId  String?
-  shippingRule    ShippingRule? @relation(fields: [shippingRuleId], references: [id])
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  variants        ProductVariant[]
+  weight          Float?
+  costOfGoodsSold Float            @default(0)
+  handlingFees    Float            @default(0)
+  image           String?
+  lastEdited      DateTime         @default(now())
+  margin          Float            @default(0)
+  miscFees        Float            @default(0)
+  sellingPrice    Float            @default(0)
+  status          String           @default("Active")
   orders          Order[]
   orderItems      OrderItem[]
+  shippingRule    ShippingRule?    @relation(fields: [shippingRuleId], references: [id])
+  store           Store            @relation(fields: [storeId], references: [id])
+  variants        ProductVariant[]
 
   @@index([storeId])
   @@index([shippingRuleId])
+  @@index([shopifyId])
 }
 
 model ProductVariant {
-  id          String   @id @default(cuid())
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id])
-  title       String
-  sku         String?
-  price       Float
-  cost        Float
-  costSource  String?  @default("SHOPIFY")
+  id              String    @id @default(cuid())
+  productId       String
+  title           String
+  sku             String?
+  price           Float
+  cost            Float
+  weight          Float?
+  inventoryQty    Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
   costLastUpdated DateTime?
-  weight      Float?
-  inventoryQty Int     @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  orders      Order[]
+  costSource      String?   @default("SHOPIFY")
+  orders          Order[]
+  product         Product   @relation(fields: [productId], references: [id])
 
   @@index([productId])
 }
 
 model ShippingRule {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   storeId     String
-  store       Store    @relation(fields: [storeId], references: [id])
   name        String
   baseRate    Float
   perItemRate Float
   weightRate  Float?
-  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   orders      Order[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  products    Product[]
+  store       Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model PaymentGateway {
-  id              String   @id @default(cuid())
-  storeId         String
-  store           Store    @relation(fields: [storeId], references: [id])
-  name            String
-  fixedFee        Float
-  percentageFee   Float
-  externalFee     Float
-  orders          Order[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String   @id @default(cuid())
+  storeId       String
+  name          String
+  fixedFee      Float
+  percentageFee Float
+  externalFee   Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  orders        Order[]
+  store         Store    @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model Order {
-  id               String           @id @default(cuid())
-  storeId          String
-  store            Store            @relation(fields: [storeId], references: [id])
-  productId        String
-  product          Product          @relation(fields: [productId], references: [id])
-  variantId        String
-  variant          ProductVariant   @relation(fields: [variantId], references: [id])
-  quantity         Int
-  price            Float
-  cost             Float
-  shippingCost     Float
-  shippingRuleId   String
-  shippingRule     ShippingRule    @relation(fields: [shippingRuleId], references: [id])
-  paymentGatewayId String
-  paymentGateway   PaymentGateway  @relation(fields: [paymentGatewayId], references: [id])
-  fixedFee         Float
-  percentageFee    Float
-  externalFee      Float
-  adSpend          Float           @default(0)
+  id                String         @id @default(cuid())
+  storeId           String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  customerId        String?
   fulfillmentStatus String         @default("UNFULFILLED")
-  status           String          @default("ACTIVE")
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  customer         Customer?       @relation(fields: [customerId], references: [id])
-  customerId       String?
-  orderItems       OrderItem[]
+  status            String         @default("ACTIVE")
+  adSpend           Float          @default(0)
+  cost              Float
+  price             Float
+  productId         String
+  quantity          Int
+  externalFee       Float
+  fixedFee          Float
+  paymentGatewayId  String
+  percentageFee     Float
+  shippingCost      Float
+  shippingRuleId    String
+  variantId         String
+  customer          Customer?      @relation(fields: [customerId], references: [id])
+  paymentGateway    PaymentGateway @relation(fields: [paymentGatewayId], references: [id])
+  product           Product        @relation(fields: [productId], references: [id])
+  shippingRule      ShippingRule   @relation(fields: [shippingRuleId], references: [id])
+  store             Store          @relation(fields: [storeId], references: [id])
+  variant           ProductVariant @relation(fields: [variantId], references: [id])
+  orderItems        OrderItem[]
 
   @@index([productId])
   @@index([variantId])
@@ -144,70 +146,70 @@ model Customer {
   firstName String
   lastName  String
   email     String   @unique
-  orders    Order[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  orders    Order[]
 }
 
 model OrderItem {
   id        String   @id @default(uuid())
-  order     Order    @relation(fields: [orderId], references: [id])
   orderId   String
-  product   Product  @relation(fields: [productId], references: [id])
   productId String
   quantity  Int
   price     Float
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  order     Order    @relation(fields: [orderId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@index([productId])
 }
 
 model AdSpend {
-  id          String   @id @default(uuid())
-  storeId     String
-  store       Store    @relation(fields: [storeId], references: [id])
-  platform    String
-  accountId   String
-  campaignId  String?
-  amount      Float
-  date        DateTime
-  lastSync    DateTime
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  storeId    String
+  platform   String
+  amount     Float
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  accountId  String
+  campaignId String?
+  lastSync   DateTime
+  store      Store    @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
   @@index([platform, accountId])
 }
 
 model FixedCost {
-  id          String   @id @default(uuid())
-  storeId     String
-  store       Store    @relation(fields: [storeId], references: [id])
-  name        String
-  amount      Float
-  category    String
-  frequency   String   // Monthly, Yearly, etc.
-  startDate   DateTime
-  endDate     DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String    @id @default(uuid())
+  storeId   String
+  name      String
+  amount    Float
+  category  String
+  frequency String
+  startDate DateTime
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  store     Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model VariableCost {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   storeId        String
-  store          Store    @relation(fields: [storeId], references: [id])
   name           String
   amountPerOrder Float
   category       String
   startDate      DateTime
   endDate        DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  store          Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
-} 
+}

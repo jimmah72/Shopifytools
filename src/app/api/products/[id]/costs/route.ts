@@ -7,16 +7,37 @@ export async function PATCH(
 ) {
   try {
     const { costOfGoodsSold, handlingFees, miscFees } = await request.json();
-    const productId = params.id;
+    const shopifyProductId = params.id; // This is the Shopify product ID
+
+    // Get the store to associate with the product
+    const store = await prisma.store.findFirst();
+    if (!store) {
+      return NextResponse.json(
+        { error: 'No store found' },
+        { status: 404 }
+      );
+    }
 
     const updateData: any = {};
     if (costOfGoodsSold !== undefined) updateData.costOfGoodsSold = costOfGoodsSold;
     if (handlingFees !== undefined) updateData.handlingFees = handlingFees;
     if (miscFees !== undefined) updateData.miscFees = miscFees;
+    updateData.lastEdited = new Date();
 
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data: updateData,
+    // Use upsert to either update existing product or create new one
+    const updatedProduct = await prisma.product.upsert({
+      where: { shopifyId: shopifyProductId },
+      update: updateData,
+      create: {
+        shopifyId: shopifyProductId,
+        storeId: store.id,
+        title: 'Unknown Product', // Will be updated when we sync with Shopify
+        description: null,
+        price: 0, // Default price, will be updated when we sync
+        cost: 0, // Default cost, will be updated when we sync
+        status: 'ACTIVE',
+        ...updateData
+      },
     });
 
     return NextResponse.json(updatedProduct);
