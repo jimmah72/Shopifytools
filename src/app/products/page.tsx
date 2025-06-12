@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useState, useCallback, useMemo } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
-import { Box, Typography, CircularProgress, Pagination, TextField, InputAdornment, Skeleton } from '@mui/material';
-import { Search } from '@mui/icons-material';
+import { Box, Typography, Pagination, TextField, InputAdornment, Skeleton, Alert, Button, Chip } from '@mui/material';
+import { Search, Refresh, CachedOutlined } from '@mui/icons-material';
 import { useDebounce } from '@/hooks/useDebounce';
 
 interface Product {
@@ -27,21 +27,40 @@ interface ProductsResponse {
   total: number;
   page: number;
   totalPages: number;
+  cached?: boolean;
+  synced?: boolean;
+  lastSync?: string;
 }
 
-// Skeleton loader component
+// Enhanced skeleton loader with shimmer effect
 const ProductsTableSkeleton = () => (
   <Box sx={{ mt: 4 }}>
     {[...Array(10)].map((_, index) => (
-      <Box key={index} sx={{ display: 'flex', alignItems: 'center', py: 2, borderBottom: '1px solid #e0e0e0' }}>
-        <Skeleton variant="rectangular" width={40} height={40} sx={{ mr: 2 }} />
+      <Box key={index} sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        py: 2, 
+        borderBottom: '1px solid #e0e0e0',
+        '& .skeleton': {
+          background: 'linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)',
+          backgroundSize: '200% 100%',
+          animation: 'shimmer 1.5s infinite'
+        }
+      }}>
+        <style jsx>{`
+          @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+          }
+        `}</style>
+        <Skeleton className="skeleton" variant="rectangular" width={40} height={40} sx={{ mr: 2 }} />
         <Box sx={{ flex: 1 }}>
-          <Skeleton variant="text" width="60%" height={24} />
-          <Skeleton variant="text" width="40%" height={16} />
+          <Skeleton className="skeleton" variant="text" width="60%" height={24} />
+          <Skeleton className="skeleton" variant="text" width="40%" height={16} />
         </Box>
-        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
-        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
-        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
       </Box>
     ))}
   </Box>
@@ -50,35 +69,74 @@ const ProductsTableSkeleton = () => (
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
+  const [isCached, setIsCached] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
   const PRODUCTS_PER_PAGE = 20;
 
   // Debounce search term to avoid too many API calls
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  // Transform Shopify products into our format
+  // Cache key for localStorage
+  const getCacheKey = (page: number, search: string) => 
+    `products_cache_${page}_${search}`;
+
+  // Load from cache first
+  const loadFromCache = useCallback((page: number, search: string): ProductsResponse | null => {
+    try {
+      const cacheKey = getCacheKey(page, search);
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const data = JSON.parse(cached);
+        // Check if cache is less than 5 minutes old
+        const cacheAge = Date.now() - new Date(data.timestamp).getTime();
+        if (cacheAge < 5 * 60 * 1000) { // 5 minutes
+          console.log('Loading from cache:', cacheKey);
+          return data.response;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading from cache:', error);
+    }
+    return null;
+  }, []);
+
+  // Save to cache
+  const saveToCache = useCallback((page: number, search: string, response: ProductsResponse) => {
+    try {
+      const cacheKey = getCacheKey(page, search);
+      const cacheData = {
+        timestamp: new Date().toISOString(),
+        response
+      };
+      localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+      console.log('Saved to cache:', cacheKey);
+    } catch (error) {
+      console.error('Error saving to cache:', error);
+    }
+  }, []);
+
+  // Transform product data
   const transformProduct = useCallback((product: any): Product => {
     const variant = product.variants[0] || {};
     const shopifyCost = variant.cost || 0;
     const price = parseFloat(variant.price) || 0;
     
-    // Get database values if they exist, otherwise use Shopify values
     const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
     const dbHandlingFees = product.dbHandlingFees || 0;
     const dbMiscFees = product.dbMiscFees || 0;
     const costSource = product.dbCostSource || 'MANUAL';
     
-    // Calculate margin based on current source
     const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
     const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees;
     const totalCost = currentCost + currentHandling + dbMiscFees;
     const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
     
-    // Format the date to be more readable
     const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
     const formattedDate = lastEdited.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -103,9 +161,30 @@ export default function ProductsPage() {
     };
   }, []);
 
-  const fetchProducts = useCallback(async (page: number = 1, search: string = '') => {
+  const fetchProducts = useCallback(async (page: number = 1, search: string = '', fromCache: boolean = true) => {
     try {
-      setLoading(true);
+      if (fromCache) {
+        // Try cache first for instant loading
+        const cachedData = loadFromCache(page, search);
+        if (cachedData) {
+          const transformedProducts = cachedData.products.map(transformProduct);
+          setProducts(transformedProducts);
+          setTotalPages(cachedData.totalPages || Math.ceil(cachedData.products.length / PRODUCTS_PER_PAGE));
+          setTotalProducts(cachedData.total || cachedData.products.length);
+          setIsCached(true);
+          setLastSync(cachedData.lastSync || null);
+          setLoading(false);
+          
+          // Start background sync
+          setBackgroundSyncing(true);
+          fetchProducts(page, search, false); // Fetch fresh data in background
+          return;
+        }
+      }
+      
+      if (fromCache) {
+        setLoading(true);
+      }
       setError(null);
       
       const params = new URLSearchParams({
@@ -127,17 +206,70 @@ export default function ProductsPage() {
       setProducts(transformedProducts);
       setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));
       setTotalProducts(data.total || data.products.length);
+      setIsCached(data.cached || false);
+      setLastSync(data.lastSync || null);
+      
+      // Save to cache
+      saveToCache(page, search, data);
+      
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
     } finally {
       setLoading(false);
+      setBackgroundSyncing(false);
     }
-  }, [transformProduct, PRODUCTS_PER_PAGE]);
+  }, [transformProduct, loadFromCache, saveToCache, PRODUCTS_PER_PAGE]);
+
+  // Force refresh from Shopify
+  const forceRefresh = useCallback(async () => {
+    setBackgroundSyncing(true);
+    try {
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: PRODUCTS_PER_PAGE.toString(),
+        sync: 'true', // Force sync with Shopify
+        ...(debouncedSearchTerm && { search: debouncedSearchTerm })
+      });
+      
+      const response = await fetch(`/api/products?${params}`);
+      if (!response.ok) {
+        throw new Error('Failed to refresh products');
+      }
+      
+      const data: ProductsResponse = await response.json();
+      const transformedProducts = data.products.map(transformProduct);
+      
+      setProducts(transformedProducts);
+      setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));
+      setTotalProducts(data.total || data.products.length);
+      setIsCached(false);
+      setLastSync(data.lastSync || new Date().toISOString());
+      
+      // Update cache
+      saveToCache(currentPage, debouncedSearchTerm, data);
+      
+      // Clear all related cache entries
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('products_cache_')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+      
+    } catch (err) {
+      console.error('Error refreshing products:', err);
+      setError(err instanceof Error ? err.message : 'Failed to refresh products');
+    } finally {
+      setBackgroundSyncing(false);
+    }
+  }, [currentPage, debouncedSearchTerm, transformProduct, saveToCache, PRODUCTS_PER_PAGE]);
 
   // Effect for initial load and search
   useEffect(() => {
-    setCurrentPage(1); // Reset to first page when search changes
+    setCurrentPage(1);
     fetchProducts(1, debouncedSearchTerm);
   }, [debouncedSearchTerm, fetchProducts]);
 
@@ -159,7 +291,7 @@ export default function ProductsPage() {
     return product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
   }, []);
 
-  // Optimized handlers with useCallback to prevent unnecessary re-renders
+  // Optimized handlers with useCallback
   const handleCostUpdate = useCallback((productId: string, newCost: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
@@ -235,7 +367,6 @@ export default function ProductsPage() {
         throw new Error('Failed to save costs');
       }
 
-      // Update the lastEdited date for this product
       setProducts(prevProducts => 
         prevProducts.map(p => 
           p.id === productId 
@@ -259,7 +390,6 @@ export default function ProductsPage() {
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
-    // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -272,6 +402,9 @@ export default function ProductsPage() {
       <Box sx={{ p: 4 }}>
         <Typography color="error" variant="h6">Error loading products</Typography>
         <Typography color="error">{error}</Typography>
+        <Button onClick={() => fetchProducts(currentPage, debouncedSearchTerm)} sx={{ mt: 2 }}>
+          Retry
+        </Button>
       </Box>
     );
   }
@@ -279,9 +412,39 @@ export default function ProductsPage() {
   return (
     <Box sx={{ p: 4 }}>
       <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" sx={{ mb: 2 }}>
-          Cost Of Goods
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h4">Cost Of Goods</Typography>
+          
+          {/* Cache Status & Refresh */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {backgroundSyncing && (
+              <Chip 
+                icon={<Refresh className="animate-spin" />} 
+                label="Syncing..." 
+                size="small" 
+                color="primary" 
+              />
+            )}
+            {isCached && (
+              <Chip 
+                icon={<CachedOutlined />} 
+                label="Cached Data" 
+                size="small" 
+                variant="outlined" 
+              />
+            )}
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={forceRefresh}
+              disabled={backgroundSyncing}
+              startIcon={<Refresh />}
+            >
+              Refresh
+            </Button>
+          </Box>
+        </Box>
+        
         <Typography color="text.secondary" sx={{ mb: 3 }}>
           Set up and manage your Cost of Goods Sold (COGS) to ensure precise Net Profit calculations.{' '}
           <a href="#" className="text-blue-500 hover:underline">
@@ -305,9 +468,16 @@ export default function ProductsPage() {
             }}
           />
           
-          <Typography variant="body2" color="text.secondary">
-            {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}
+            </Typography>
+            {lastSync && (
+              <Typography variant="caption" color="text.secondary">
+                Last sync: {new Date(lastSync).toLocaleTimeString()}
+              </Typography>
+            )}
+          </Box>
         </Box>
       </Box>
 
