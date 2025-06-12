@@ -182,9 +182,26 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    console.log('Products API - Database products found:', dbProducts.length)
+    console.log('Products API - Database products:', dbProducts.map(p => ({
+      shopifyId: p.shopifyId,
+      miscFees: p.miscFees,
+      costOfGoodsSold: p.costOfGoodsSold,
+      handlingFees: p.handlingFees,
+      costSource: p.costSource
+    })))
+
     // Merge Shopify data with our cost data
     const products = shopifyProducts.map((shopifyProduct: ShopifyProduct) => {
       const dbProduct = dbProducts.find(p => p.shopifyId === shopifyProduct.id)
+      console.log(`Products API - Looking for product ${shopifyProduct.id} in database:`, dbProduct ? 'FOUND' : 'NOT FOUND')
+      if (dbProduct) {
+        console.log(`Products API - Database product data:`, {
+          miscFees: dbProduct.miscFees,
+          costOfGoodsSold: dbProduct.costOfGoodsSold,
+          handlingFees: dbProduct.handlingFees
+        })
+      }
       return {
         ...shopifyProduct,
         // Add database fields to the product
