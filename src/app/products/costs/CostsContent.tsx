@@ -1,3 +1,5 @@
+"use client"
+
 import React, { useState } from 'react';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
 
@@ -12,6 +14,9 @@ interface Product {
   handlingFees: number;
   miscFees: number;
   margin: number;
+  costSource: 'SHOPIFY' | 'MANUAL';
+  shopifyCostOfGoodsSold?: number;
+  shopifyHandlingFees?: number;
 }
 
 const CostsContent: React.FC = () => {
@@ -61,6 +66,53 @@ const CostsContent: React.FC = () => {
     }
   };
 
+  const handleCostSourceToggle = async (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
+    try {
+      setProducts(products.map(product => {
+        if (product.id === productId) {
+          return {
+            ...product,
+            costSource: newSource
+          };
+        }
+        return product;
+      }));
+
+      await fetch(`/api/products/${productId}/costs`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ costSource: newSource }),
+      });
+    } catch (error) {
+      console.error('Failed to update cost source:', error);
+      // Revert the optimistic update
+      setProducts(products);
+      setError('Failed to update cost source. Please try again.');
+    }
+  };
+
+  const handleSave = async (productId: string, costs: { 
+    costOfGoodsSold: number; 
+    handlingFees: number; 
+    miscFees: number; 
+    costSource: string 
+  }) => {
+    try {
+      await fetch(`/api/products/${productId}/costs`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(costs),
+      });
+    } catch (error) {
+      console.error('Failed to save product costs:', error);
+      throw error; // Re-throw so the component can handle it
+    }
+  };
+
   return (
     <div className="container mx-auto py-6">
       {error && (
@@ -76,6 +128,8 @@ const CostsContent: React.FC = () => {
           onCostUpdate={handleCostUpdate}
           onHandlingFeesUpdate={handleHandlingFeesUpdate}
           onMiscFeesUpdate={handleMiscFeesUpdate}
+          onCostSourceToggle={handleCostSourceToggle}
+          onSave={handleSave}
         />
       )}
     </div>
