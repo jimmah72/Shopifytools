@@ -117,12 +117,36 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [metrics, setMetrics] = useState<OrdersResponse['metrics'] | null>(null)
   const [loading, setLoading] = useState(true)
+  const [metricsLoading, setMetricsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [status, setStatus] = useState('any')
   const [financialStatus, setFinancialStatus] = useState('')
   const [fulfillmentStatus, setFulfillmentStatus] = useState('')
+
+  const fetchMetrics = async () => {
+    setMetricsLoading(true)
+    setMetricsError(null)
+    
+    try {
+      const response = await fetch('/api/orders/metrics')
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.details || 'Failed to fetch metrics')
+      }
+
+      const data = await response.json()
+      setMetrics(data.metrics)
+    } catch (err) {
+      console.error('Error fetching metrics:', err)
+      setMetricsError(err instanceof Error ? err.message : 'Failed to fetch metrics')
+    } finally {
+      setMetricsLoading(false)
+    }
+  }
 
   const fetchOrders = async (currentPage: number = 1) => {
     setLoading(true)
@@ -147,9 +171,13 @@ export default function OrdersPage() {
 
       const data: OrdersResponse = await response.json()
       setOrders(data.orders)
-      setMetrics(data.metrics)
       setPage(data.page)
       setTotalPages(data.totalPages)
+      
+      // Only update metrics if not already loaded or if there's an error
+      if (!metrics && !metricsError && data.metrics) {
+        setMetrics(data.metrics)
+      }
     } catch (err) {
       console.error('Error fetching orders:', err)
       setError(err instanceof Error ? err.message : 'Failed to fetch orders')
@@ -159,6 +187,13 @@ export default function OrdersPage() {
   }
 
   useEffect(() => {
+    // Fetch metrics once on component mount (cached for 5 minutes)
+    fetchMetrics()
+    fetchOrders(1)
+  }, [])
+
+  useEffect(() => {
+    // Only fetch orders when filters change
     fetchOrders(1)
   }, [status, financialStatus, fulfillmentStatus])
 
@@ -216,7 +251,7 @@ export default function OrdersPage() {
         </Typography>
       </Stack>
 
-      {metrics && (
+      {(metrics || metricsLoading) && (
         <GridContainer style={{ marginBottom: '2rem' }}>
           <Card>
             <Stack spacing={2}>
@@ -226,9 +261,13 @@ export default function OrdersPage() {
                   Total Revenue
                 </Typography>
               </Box>
-              <Typography variant="h5" component="span">
-                {formatCurrency(metrics.totalRevenue)}
-              </Typography>
+              {metricsLoading ? (
+                <CircularProgress size={24} />
+              ) : (
+                <Typography variant="h5" component="span">
+                  {formatCurrency(metrics?.totalRevenue || 0)}
+                </Typography>
+              )}
             </Stack>
           </Card>
 
@@ -240,9 +279,13 @@ export default function OrdersPage() {
                   Total Orders
                 </Typography>
               </Box>
-              <Typography variant="h5" component="span">
-                {metrics.totalOrdersCount}
-              </Typography>
+              {metricsLoading ? (
+                <CircularProgress size={24} />
+              ) : (
+                <Typography variant="h5" component="span">
+                  {metrics?.totalOrdersCount || 0}
+                </Typography>
+              )}
             </Stack>
           </Card>
 
@@ -254,9 +297,13 @@ export default function OrdersPage() {
                   Shipping Costs
                 </Typography>
               </Box>
-              <Typography variant="h5" component="span">
-                {formatCurrency(metrics.totalShippingCosts)}
-              </Typography>
+              {metricsLoading ? (
+                <CircularProgress size={24} />
+              ) : (
+                <Typography variant="h5" component="span">
+                  {formatCurrency(metrics?.totalShippingCosts || 0)}
+                </Typography>
+              )}
             </Stack>
           </Card>
 
@@ -268,12 +315,22 @@ export default function OrdersPage() {
                   Average Order Value
                 </Typography>
               </Box>
-              <Typography variant="h5" component="span">
-                {formatCurrency(metrics.averageOrderValue)}
-              </Typography>
+              {metricsLoading ? (
+                <CircularProgress size={24} />
+              ) : (
+                <Typography variant="h5" component="span">
+                  {formatCurrency(metrics?.averageOrderValue || 0)}
+                </Typography>
+              )}
             </Stack>
           </Card>
         </GridContainer>
+      )}
+
+      {metricsError && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Failed to load metrics: {metricsError}. Orders data below may be incomplete.
+        </Alert>
       )}
 
       <Box sx={{ mb: 3 }}>
