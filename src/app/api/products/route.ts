@@ -209,18 +209,18 @@ export async function GET(request: NextRequest) {
             dbVariantSource: dbVariant?.costSource
           })
           
-          // If we have a dbVariant with a cost and it's not from Shopify, use that
-          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined && dbVariant?.costSource !== 'SHOPIFY') {
+          // If we have a dbVariant with a cost and it's set to MANUAL, use that
+          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined && dbVariant?.costSource === 'MANUAL') {
             return {
               ...variant,
               cost: dbVariant.cost,
-              costSource: dbVariant.costSource ?? 'MANUAL',
+              costSource: 'MANUAL',
               costLastUpdated: dbVariant.costLastUpdated ?? new Date()
             }
           }
           
-          // Try to use Shopify's cost if available
-          if (shopifyCost !== null && !isNaN(shopifyCost)) {
+          // Try to use Shopify's cost if available and valid
+          if (shopifyCost !== null && !isNaN(shopifyCost) && shopifyCost > 0) {
             return {
               ...variant,
               cost: shopifyCost,
@@ -229,7 +229,7 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // If we have any dbVariant cost as a last resort, use that
+          // If we have any dbVariant cost as a fallback, use that
           if (dbVariant?.cost !== null && dbVariant?.cost !== undefined) {
             return {
               ...variant,
@@ -239,7 +239,8 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Fallback to 0 cost with MANUAL source if no valid cost found
+          // If no cost data is available anywhere, default to MANUAL mode with 0 cost
+          // This allows users to enter their own cost data
           return {
             ...variant,
             cost: 0,

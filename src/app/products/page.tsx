@@ -44,7 +44,7 @@ export default function ProductsPage() {
         const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
         const dbHandlingFees = product.dbHandlingFees || 0;
         const dbMiscFees = product.dbMiscFees || 0;
-        const costSource = product.dbCostSource || 'SHOPIFY';
+        const costSource = product.dbCostSource || 'MANUAL'; // Default to MANUAL if no Shopify cost available
         
         // Calculate margin based on current source
         const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;

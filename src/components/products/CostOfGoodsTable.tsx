@@ -148,7 +148,7 @@ export function CostOfGoodsTable({
 
   const getDisplayedHandlingFees = (product: Product) => {
     if (product.costSource === 'SHOPIFY') {
-      return product.shopifyHandlingFees || 0;
+      return 0;
     }
     return product.handlingFees;
   };
@@ -156,6 +156,10 @@ export function CostOfGoodsTable({
   const isFieldEditable = (product: Product, field: 'cost' | 'handling' | 'misc') => {
     if (field === 'misc') return true; // Misc is always editable
     return product.costSource === 'MANUAL';
+  };
+
+  const isShopifyCostAvailable = (product: Product) => {
+    return product.shopifyCostOfGoodsSold !== undefined && product.shopifyCostOfGoodsSold > 0;
   };
 
   return (
@@ -259,18 +263,32 @@ export function CostOfGoodsTable({
                   {formatCurrency(product.sellingPrice)}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleSourceToggle(product.id)}
-                    className={`h-8 px-3 text-xs font-medium border-0 ${
-                      product.costSource === 'SHOPIFY' 
-                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                        : 'bg-orange-500 text-black hover:bg-orange-600'
-                    }`}
-                  >
-                    {product.costSource}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSourceToggle(product.id)}
+                      className={`h-8 px-3 text-xs font-medium border-0 ${
+                        product.costSource === 'SHOPIFY' 
+                          ? isShopifyCostAvailable(product)
+                            ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                            : 'bg-yellow-500 text-black hover:bg-yellow-600'
+                          : 'bg-orange-500 text-black hover:bg-orange-600'
+                      }`}
+                      title={
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'Shopify cost data not available - consider switching to Manual mode'
+                          : ''
+                      }
+                    >
+                      {product.costSource}
+                    </Button>
+                    {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) && (
+                      <span className="text-xs text-yellow-400" title="Shopify cost data not available">
+                        ⚠️
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {isFieldEditable(product, 'cost') ? (
@@ -282,8 +300,22 @@ export function CostOfGoodsTable({
                       step="1"
                     />
                   ) : (
-                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                      {getDisplayedCostOfGoodsSold(product)}
+                    <div 
+                      className={`w-28 h-8 flex items-center justify-end text-sm px-2 rounded ${
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'text-yellow-400 bg-yellow-900/20 border border-yellow-600'
+                          : 'text-gray-400 bg-gray-800'
+                      }`}
+                      title={
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'No cost data available from Shopify'
+                          : ''
+                      }
+                    >
+                      {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) 
+                        ? 'N/A' 
+                        : getDisplayedCostOfGoodsSold(product)
+                      }
                     </div>
                   )}
                 </TableCell>
