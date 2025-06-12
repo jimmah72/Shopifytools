@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getProducts } from '@/lib/shopify-api'
+import { getProducts, getProductsWithInventoryCosts } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 import { Prisma } from '@prisma/client'
 
@@ -10,6 +10,9 @@ interface ShopifyVariant {
   inventory_quantity: number
   cost_per_item: string
   sku?: string
+  inventory_cost?: string
+  inventory_tracked?: boolean
+  inventory_item_id?: string
 }
 
 interface ShopifyProduct {
@@ -133,28 +136,20 @@ export async function GET(request: NextRequest) {
 
     // Get query parameters
     const searchParams = request.nextUrl.searchParams
-    const limit = parseInt(searchParams.get('limit') || '50')
+    const limit = parseInt(searchParams.get('limit') || '250')
     console.log('Products API - Fetching products with limit:', limit)
     
-    // Fetch products from Shopify
-    console.log('Products API - Fetching products from Shopify')
-    const shopifyProducts = (await getProducts(formattedDomain, store.accessToken, { 
-      limit,
-      fields: [
-        'id', 
-        'title', 
-        'handle', 
-        'description', 
-        'tags', 
-        'images',
-        'variants',
-        'variants.id',
-        'variants.price',
-        'variants.inventory_quantity',
-        'variants.cost_per_item',
-        'variants.sku'
-      ]
+    // Fetch products from Shopify with inventory costs
+    console.log('Products API - Fetching products from Shopify with inventory costs')
+    const shopifyProducts = (await getProductsWithInventoryCosts(formattedDomain, store.accessToken, { 
+      limit
     })) as ShopifyProduct[]
+
+    console.log('Products API - Total Shopify products fetched:', shopifyProducts.length)
+    console.log('Products API - All products from Shopify:')
+    shopifyProducts.forEach((product, index) => {
+      console.log(`  ${index + 1}. ${product.title} (ID: ${product.id})`)
+    })
 
     console.log('Products API - First Shopify product:', shopifyProducts[0] ? {
       id: shopifyProducts[0].id,
@@ -199,13 +194,17 @@ export async function GET(request: NextRequest) {
         dbCostSource: dbProduct?.costSource || 'SHOPIFY',
         dbLastEdited: dbProduct?.lastEdited,
         variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
-          const dbVariant = dbProduct?.variants?.find((v) => v.id === variant.id)
+          const dbVariant = dbProduct?.variants?.find((v: any) => v.id === variant.id)
+          // Try inventory cost first, then cost_per_item
+          const inventoryCost = variant.inventory_cost ? parseFloat(variant.inventory_cost) : null
           const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
+          const finalShopifyCost = inventoryCost || shopifyCost
           
           console.log(`Processing variant ${variant.id}:`, {
             dbVariantCost: dbVariant?.cost,
             rawShopifyCost: variant.cost_per_item,
-            parsedShopifyCost: shopifyCost,
+            inventoryCost: variant.inventory_cost,
+            finalShopifyCost: finalShopifyCost,
             dbVariantSource: dbVariant?.costSource
           })
           
@@ -219,11 +218,11 @@ export async function GET(request: NextRequest) {
             }
           }
           
-          // Try to use Shopify's cost if available and valid
-          if (shopifyCost !== null && !isNaN(shopifyCost) && shopifyCost > 0) {
+          // Try to use Shopify's cost (inventory or cost_per_item) if available and valid
+          if (finalShopifyCost !== null && !isNaN(finalShopifyCost) && finalShopifyCost > 0) {
             return {
               ...variant,
-              cost: shopifyCost,
+              cost: finalShopifyCost,
               costSource: 'SHOPIFY',
               costLastUpdated: new Date()
             }

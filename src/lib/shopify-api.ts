@@ -64,16 +64,36 @@ export async function getProducts(shop: string, accessToken: string, options: {
     }
 
     const data = await response.json();
-    console.log('Shopify API - Product data sample:', {
-      firstProduct: data.products[0] ? {
-        id: data.products[0].id,
-        title: data.products[0].title,
-        firstVariant: data.products[0].variants[0] ? {
-          id: data.products[0].variants[0].id,
-          cost_per_item: data.products[0].variants[0].cost_per_item
-        } : null
-      } : null
+    
+    // Enhanced logging to see all products
+    console.log('Shopify API - Total products returned:', data.products.length);
+    console.log('Shopify API - All products:');
+    data.products.forEach((product: any, index: number) => {
+      console.log(`  Product ${index + 1}: ${product.title} (ID: ${product.id})`);
+      if (product.variants && product.variants.length > 0) {
+        console.log(`    First variant cost_per_item: ${product.variants[0].cost_per_item}`);
+      }
     });
+    
+    // Look for Liquid Snowboard specifically
+    const liquidProduct = data.products.find((p: any) => 
+      p.title.toLowerCase().includes('liquid') || 
+      p.title.toLowerCase().includes('snowboard') ||
+      p.title.toLowerCase().includes('collection')
+    );
+    
+    if (liquidProduct) {
+      console.log('Shopify API - FOUND LIQUID/SNOWBOARD PRODUCT:');
+      console.log(`  Title: ${liquidProduct.title}`);
+      console.log(`  ID: ${liquidProduct.id}`);
+      console.log('  Variants with cost data:');
+      liquidProduct.variants.forEach((variant: any, index: number) => {
+        console.log(`    Variant ${index + 1} (${variant.id}): cost_per_item = ${variant.cost_per_item}`);
+      });
+    } else {
+      console.log('Shopify API - NO LIQUID/SNOWBOARD PRODUCT FOUND');
+    }
+    
     console.log('Shopify API - Successfully fetched products')
     return data.products;
   } catch (error) {
@@ -108,6 +128,151 @@ export async function getVariant(shop: string, accessToken: string, variantId: s
     const data = await response.json();
     console.log('Shopify API - Successfully fetched variant')
     return data.variant;
+  } catch (error) {
+    console.error('Shopify API - Error:', error)
+    throw error;
+  }
+}
+
+export async function getInventoryItem(shop: string, accessToken: string, inventoryItemId: string) {
+  console.log('Shopify API - Getting inventory item:', inventoryItemId)
+  
+  try {
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+    
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/inventory_items/${inventoryItemId}.json`);
+    
+    console.log('Shopify API - Making inventory request to:', url.toString())
+    const response = await fetch(url.toString(), {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error('Shopify API - Inventory error response:', response.statusText)
+      throw new Error(`Shopify API Error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('Shopify API - Inventory item data:', {
+      id: data.inventory_item?.id,
+      cost: data.inventory_item?.cost,
+      tracked: data.inventory_item?.tracked
+    });
+    return data.inventory_item;
+  } catch (error) {
+    console.error('Shopify API - Inventory error:', error)
+    throw error;
+  }
+}
+
+export async function getProductsWithInventoryCosts(shop: string, accessToken: string, options: { 
+  limit?: number;
+  fields?: string[];
+} = {}) {
+  console.log('Shopify API - Getting products with inventory costs for shop:', shop)
+  
+  try {
+    // First get products with inventory_item_id
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/products.json`);
+    
+    if (options.limit) {
+      url.searchParams.set('limit', options.limit.toString());
+    }
+    
+    // Include inventory_item_id in the fields
+    const fields = [
+      'id', 'title', 'handle', 'description', 'tags', 'images',
+      'variants', 'variants.id', 'variants.price', 'variants.inventory_quantity',
+      'variants.cost_per_item', 'variants.sku', 'variants.inventory_item_id'
+    ];
+    
+    url.searchParams.set('fields', fields.join(','));
+
+    console.log('Shopify API - Making products request to:', url.toString())
+    const response = await fetch(url.toString(), {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('Shopify API - Products response status:', response.status)
+
+    if (!response.ok) {
+      console.error('Shopify API - Products error response:', response.statusText)
+      throw new Error(`Shopify API Error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    
+    console.log('Shopify API - Total products returned:', data.products.length);
+    
+    // Now fetch inventory costs for each variant with rate limiting
+    const productsWithCosts = [];
+    
+    for (const product of data.products) {
+      const variantsWithCosts = [];
+      
+      for (const variant of product.variants) {
+        if (variant.inventory_item_id) {
+          try {
+            const inventoryItem = await getInventoryItem(shop, accessToken, variant.inventory_item_id);
+            variantsWithCosts.push({
+              ...variant,
+              inventory_cost: inventoryItem?.cost,
+              inventory_tracked: inventoryItem?.tracked
+            });
+            // Add small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (error) {
+            console.error(`Failed to get inventory for variant ${variant.id}:`, error);
+            variantsWithCosts.push({
+              ...variant,
+              inventory_cost: null,
+              inventory_tracked: false
+            });
+          }
+        } else {
+          variantsWithCosts.push({
+            ...variant,
+            inventory_cost: null,
+            inventory_tracked: false
+          });
+        }
+      }
+      
+      productsWithCosts.push({
+        ...product,
+        variants: variantsWithCosts
+      });
+    }
+    
+    // Log results for Liquid Snowboard specifically
+    const liquidProduct = productsWithCosts.find((p: any) => 
+      p.title.toLowerCase().includes('liquid')
+    );
+    
+    if (liquidProduct) {
+      console.log('Shopify API - LIQUID SNOWBOARD INVENTORY COSTS:');
+      console.log(`  Title: ${liquidProduct.title}`);
+      console.log(`  ID: ${liquidProduct.id}`);
+      liquidProduct.variants.forEach((variant: any, index: number) => {
+        console.log(`    Variant ${index + 1} (${variant.id}):`);
+        console.log(`      cost_per_item: ${variant.cost_per_item}`);
+        console.log(`      inventory_cost: ${variant.inventory_cost}`);
+        console.log(`      inventory_tracked: ${variant.inventory_tracked}`);
+      });
+    }
+    
+    console.log('Shopify API - Successfully fetched products with inventory costs')
+    return productsWithCosts;
   } catch (error) {
     console.error('Shopify API - Error:', error)
     throw error;

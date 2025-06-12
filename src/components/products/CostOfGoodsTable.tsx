@@ -63,6 +63,16 @@ export function CostOfGoodsTable({
     }).format(amount);
   };
 
+  const formatCurrencyForInput = (amount: number) => {
+    return amount.toFixed(2);
+  };
+
+  const parseCurrencyInput = (value: string) => {
+    // Remove any non-numeric characters except decimal point
+    const cleanValue = value.replace(/[^0-9.]/g, '');
+    return parseFloat(cleanValue) || 0;
+  };
+
   const handleSelectAll = () => {
     if (selectedProducts.size === products.length) {
       setSelectedProducts(new Set());
@@ -254,7 +264,7 @@ export function CostOfGoodsTable({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="bg-green-400 text-black border-0 font-medium">
+                  <Badge variant="outline" className="bg-green-400 text-black border-0 font-medium dark:bg-green-400 dark:text-black">
                     {product.status}
                   </Badge>
                 </TableCell>
@@ -271,9 +281,9 @@ export function CostOfGoodsTable({
                       className={`h-8 px-3 text-xs font-medium border-0 ${
                         product.costSource === 'SHOPIFY' 
                           ? isShopifyCostAvailable(product)
-                            ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                            : 'bg-yellow-500 text-black hover:bg-yellow-600'
-                          : 'bg-orange-500 text-black hover:bg-orange-600'
+                            ? 'bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-500 dark:text-white dark:hover:bg-blue-600' 
+                            : 'bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-500 dark:text-black dark:hover:bg-yellow-600'
+                          : 'bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:text-white dark:hover:bg-orange-600'
                       }`}
                       title={
                         product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
@@ -293,11 +303,11 @@ export function CostOfGoodsTable({
                 <TableCell>
                   {isFieldEditable(product, 'cost') ? (
                     <Input
-                      type="number"
-                      value={getDisplayedCostOfGoodsSold(product)}
-                      onChange={(e) => handleCostChange(product.id, parseFloat(e.target.value) || 0)}
+                      type="text"
+                      value={formatCurrencyForInput(getDisplayedCostOfGoodsSold(product))}
+                      onChange={(e) => handleCostChange(product.id, parseCurrencyInput(e.target.value))}
                       className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                      step="1"
+                      placeholder="0.00"
                     />
                   ) : (
                     <div 
@@ -314,7 +324,7 @@ export function CostOfGoodsTable({
                     >
                       {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) 
                         ? 'N/A' 
-                        : getDisplayedCostOfGoodsSold(product)
+                        : formatCurrency(getDisplayedCostOfGoodsSold(product))
                       }
                     </div>
                   )}
@@ -322,25 +332,25 @@ export function CostOfGoodsTable({
                 <TableCell>
                   {isFieldEditable(product, 'handling') ? (
                     <Input
-                      type="number"
-                      value={getDisplayedHandlingFees(product)}
-                      onChange={(e) => handleHandlingFeesChange(product.id, parseFloat(e.target.value) || 0)}
+                      type="text"
+                      value={formatCurrencyForInput(getDisplayedHandlingFees(product))}
+                      onChange={(e) => handleHandlingFeesChange(product.id, parseCurrencyInput(e.target.value))}
                       className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                      step="1"
+                      placeholder="0.00"
                     />
                   ) : (
                     <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                      {getDisplayedHandlingFees(product)}
+                      {formatCurrency(getDisplayedHandlingFees(product))}
                     </div>
                   )}
                 </TableCell>
                 <TableCell>
                   <Input
-                    type="number"
-                    value={product.miscFees}
-                    onChange={(e) => handleMiscFeesChange(product.id, parseFloat(e.target.value) || 0)}
+                    type="text"
+                    value={formatCurrencyForInput(product.miscFees)}
+                    onChange={(e) => handleMiscFeesChange(product.id, parseCurrencyInput(e.target.value))}
                     className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="1"
+                    placeholder="0.00"
                   />
                 </TableCell>
                 <TableCell className="text-left font-medium text-sm">
