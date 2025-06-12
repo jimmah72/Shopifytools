@@ -21,7 +21,6 @@ import {
 import { 
   Facebook as FacebookIcon,
   Google as GoogleIcon,
-  X as TwitterIcon,
   Instagram as InstagramIcon,
   LinkedIn as LinkedInIcon,
   YouTube as YouTubeIcon,
@@ -116,6 +115,12 @@ const SnapchatIcon = (props: any) => (
 const AmazonIcon = (props: any) => (
   <Avatar {...props} sx={{ bgcolor: '#FF9900', width: 32, height: 32, fontSize: 14, fontWeight: 'bold' }}>
     A
+  </Avatar>
+)
+
+const TwitterIcon = (props: any) => (
+  <Avatar {...props} sx={{ bgcolor: '#000000', color: '#fff', width: 32, height: 32, fontSize: 14, fontWeight: 'bold' }}>
+    X
   </Avatar>
 )
 
