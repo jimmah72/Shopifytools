@@ -13,6 +13,7 @@ interface StoreContextType {
   store: Store | null
   setStore: (store: Store | null) => void
   loading: boolean
+  refreshStore: () => Promise<void>
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined)
@@ -21,29 +22,36 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [store, setStore] = useState<Store | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchStore = async () => {
-      console.log('StoreContext - Fetching store...')
-      try {
-        const response = await fetch('/api/store')
-        console.log('StoreContext - Store API response status:', response.status)
-        
-        if (response.ok) {
-          const data = await response.json()
-          console.log('StoreContext - Store data:', data)
-          setStore(data)
-        } else {
-          const errorData = await response.json()
-          console.error('StoreContext - Store API error:', errorData)
-        }
-      } catch (error) {
-        console.error('StoreContext - Error fetching store:', error)
-      } finally {
-        console.log('StoreContext - Setting loading to false')
-        setLoading(false)
+  const fetchStore = async () => {
+    console.log('StoreContext - Fetching store...')
+    try {
+      const response = await fetch('/api/store')
+      console.log('StoreContext - Store API response status:', response.status)
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log('StoreContext - Store data:', data)
+        setStore(data)
+      } else {
+        const errorData = await response.json()
+        console.error('StoreContext - Store API error:', errorData)
+        setStore(null)
       }
+    } catch (error) {
+      console.error('StoreContext - Error fetching store:', error)
+      setStore(null)
+    } finally {
+      console.log('StoreContext - Setting loading to false')
+      setLoading(false)
     }
+  }
 
+  const refreshStore = async () => {
+    setLoading(true)
+    await fetchStore()
+  }
+
+  useEffect(() => {
     console.log('StoreContext - Initial render, calling fetchStore')
     fetchStore()
   }, [])
@@ -54,7 +62,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       console.log('StoreContext - Setting new store:', newStore)
       setStore(newStore)
     },
-    loading
+    loading,
+    refreshStore
   }
 
   console.log('StoreContext - Current state:', { store, loading })

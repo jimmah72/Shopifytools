@@ -74,4 +74,40 @@ export async function PUT(request: NextRequest) {
       { status: 500 }
     )
   }
+}
+
+export async function DELETE() {
+  console.log('Store API - DELETE request received')
+  try {
+    console.log('Store API - Attempting to find and delete store')
+    
+    const store = await prisma.store.findFirst()
+    
+    if (!store) {
+      console.log('Store API - No store found to delete')
+      return NextResponse.json(
+        { message: 'No store found to disconnect' },
+        { status: 404 }
+      )
+    }
+
+    console.log('Store API - Deleting store:', store.id)
+    
+    // Delete the store - this will cascade delete related data
+    await prisma.store.delete({
+      where: { id: store.id }
+    })
+
+    console.log('Store API - Store disconnected successfully')
+    return NextResponse.json({ 
+      message: 'Store disconnected successfully',
+      deletedStoreId: store.id 
+    })
+  } catch (error) {
+    console.error('Store API - Error disconnecting store:', error)
+    return NextResponse.json(
+      { error: 'Failed to disconnect store' },
+      { status: 500 }
+    )
+  }
 } 
