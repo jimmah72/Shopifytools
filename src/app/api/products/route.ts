@@ -69,9 +69,26 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const search = searchParams.get('search') || ''
-    const fetchCosts = searchParams.get('fetchCosts') === 'true' // New parameter
+    const fetchCosts = searchParams.get('fetchCosts') === 'true'
     
-    console.log('Products API - Query params:', { page, limit, search, fetchCosts })
+    // Sort and filter parameters
+    const sortField = searchParams.get('sortField') || 'title'
+    const sortDirection = searchParams.get('sortDirection') || 'asc'
+    const statusFilter = searchParams.get('statusFilter') || ''
+    const costSourceFilter = searchParams.get('costSourceFilter') || ''
+    const costDataFilter = searchParams.get('costDataFilter') || ''
+    
+    console.log('Products API - Query params:', { 
+      page, 
+      limit, 
+      search, 
+      fetchCosts, 
+      sortField, 
+      sortDirection, 
+      statusFilter, 
+      costSourceFilter, 
+      costDataFilter 
+    })
     
     // Fetch ALL products from Shopify using efficient pagination
     console.log('Products API - Fetching ALL products from Shopify with basic data')
@@ -93,34 +110,16 @@ export async function GET(request: NextRequest) {
       console.log('Products API - Filtered products by search:', filteredProducts.length);
     }
 
-    // Now we have exact totals since we fetched all products
-    const totalProducts = filteredProducts.length;
-    const totalPages = Math.ceil(totalProducts / limit);
-    
-    // Client-side pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + limit;
-    const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
-
-    console.log('Products API - Pagination:', {
-      totalProducts,
-      totalPages,
-      currentPage: page,
-      startIndex,
-      endIndex,
-      returnedProducts: paginatedProducts.length
-    });
-
-    // Fetch cost data for products on current page if requested
+    // Fetch cost data for ALL filtered products if requested (needed for filtering by cost data)
     let costData: Record<string, number> = {};
-    if (fetchCosts && paginatedProducts.length > 0) {
-      console.log('Products API - Fetching cost data for current page products');
-      const productIds = paginatedProducts.map((product: ShopifyProduct) => product.id);
+    if (fetchCosts && filteredProducts.length > 0) {
+      console.log('Products API - Fetching cost data for all filtered products');
+      const productIds = filteredProducts.map((product: ShopifyProduct) => product.id);
       costData = await getProductsCostData(formattedDomain, store.accessToken, productIds);
     }
 
-    // Fetch existing database records for products on current page
-    const numericProductIds = paginatedProducts.map((product: ShopifyProduct) => {
+    // Fetch existing database records for ALL filtered products
+    const allNumericProductIds = filteredProducts.map((product: ShopifyProduct) => {
       return product.id.includes('gid://shopify/Product/') 
         ? product.id.replace('gid://shopify/Product/', '')
         : product.id;
@@ -128,7 +127,7 @@ export async function GET(request: NextRequest) {
 
     const existingProducts = await prisma.product.findMany({
       where: {
-        shopifyId: { in: numericProductIds },
+        shopifyId: { in: allNumericProductIds },
         storeId: store.id
       },
       select: {
@@ -147,8 +146,8 @@ export async function GET(request: NextRequest) {
 
     console.log('Products API - Found', existingProducts.length, 'existing database records for products');
 
-    // Transform products to our format, respecting database state
-    const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
+    // Transform ALL products to our format
+    const transformedProducts = filteredProducts.map((shopifyProduct: ShopifyProduct) => {
       const variant = shopifyProduct.variants[0] || {};
       const price = parseFloat(variant.price) || 0;
       
@@ -167,7 +166,7 @@ export async function GET(request: NextRequest) {
       const costSource = existingProduct?.costSource || 'SHOPIFY';
       const costOfGoodsSold = existingProduct?.costSource === 'MANUAL' 
         ? (existingProduct.costOfGoodsSold || 0)
-        : (shopifyInventoryCost !== undefined ? shopifyInventoryCost : 0); // Only fallback to 0 if shopifyInventoryCost is undefined, preserve null for missing data
+        : (shopifyInventoryCost !== undefined ? shopifyInventoryCost : 0);
       const handlingFees = existingProduct?.costSource === 'MANUAL' 
         ? (existingProduct.handlingFees || 0)
         : 0; // Shopify doesn't have handling fees
@@ -176,10 +175,8 @@ export async function GET(request: NextRequest) {
       // Calculate margin
       const totalCost = costOfGoodsSold + handlingFees + miscFees;
       const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
-      
 
-      
-      const productData = {
+      return {
         id: numericId,
         title: shopifyProduct.title,
         image: shopifyProduct.images?.[0]?.src || '',
@@ -201,8 +198,8 @@ export async function GET(request: NextRequest) {
         miscFees: miscFees,
         margin: margin,
         costSource: costSource,
-        shopifyCostOfGoodsSold: shopifyInventoryCost, // Direct assignment - undefined becomes null in JSON
-        shopifyHandlingFees: 0, // Shopify doesn't have handling fees
+        shopifyCostOfGoodsSold: shopifyInventoryCost,
+        shopifyHandlingFees: 0,
         sku: variant.sku || '',
         inventoryQuantity: variant.inventory_quantity || 0,
         variants: shopifyProduct.variants.map(v => {
@@ -221,14 +218,105 @@ export async function GET(request: NextRequest) {
           };
         })
       };
+    });
+
+    // Apply additional filters
+    let filteredAndTransformedProducts = transformedProducts;
+    
+    // Filter by status
+    if (statusFilter) {
+      filteredAndTransformedProducts = filteredAndTransformedProducts.filter(product => 
+        product.status === statusFilter
+      );
+      console.log('Products API - Filtered by status:', filteredAndTransformedProducts.length);
+    }
+    
+    // Filter by cost source
+    if (costSourceFilter) {
+      filteredAndTransformedProducts = filteredAndTransformedProducts.filter(product => 
+        product.costSource === costSourceFilter
+      );
+      console.log('Products API - Filtered by cost source:', filteredAndTransformedProducts.length);
+    }
+    
+    // Filter by cost data availability
+    if (costDataFilter) {
+      if (costDataFilter === 'with-cost') {
+        filteredAndTransformedProducts = filteredAndTransformedProducts.filter(product => 
+          product.shopifyCostOfGoodsSold !== null && product.shopifyCostOfGoodsSold !== undefined
+        );
+      } else if (costDataFilter === 'without-cost') {
+        filteredAndTransformedProducts = filteredAndTransformedProducts.filter(product => 
+          product.shopifyCostOfGoodsSold === null || product.shopifyCostOfGoodsSold === undefined
+        );
+      }
+      console.log('Products API - Filtered by cost data:', filteredAndTransformedProducts.length);
+    }
+
+    // Apply sorting
+    filteredAndTransformedProducts.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
       
-      return productData;
+      switch (sortField) {
+        case 'title':
+          aValue = a.title.toLowerCase();
+          bValue = b.title.toLowerCase();
+          break;
+        case 'status':
+          aValue = a.status;
+          bValue = b.status;
+          break;
+        case 'sellingPrice':
+          aValue = a.sellingPrice;
+          bValue = b.sellingPrice;
+          break;
+        case 'costOfGoodsSold':
+          aValue = a.costOfGoodsSold;
+          bValue = b.costOfGoodsSold;
+          break;
+        case 'margin':
+          aValue = a.margin;
+          bValue = b.margin;
+          break;
+        case 'lastEdited':
+          aValue = new Date(a.lastEdited);
+          bValue = new Date(b.lastEdited);
+          break;
+        default:
+          aValue = a.title.toLowerCase();
+          bValue = b.title.toLowerCase();
+      }
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    console.log('Products API - After all filters and sorting:', filteredAndTransformedProducts.length);
+
+    // Now apply pagination
+    const totalProducts = filteredAndTransformedProducts.length;
+    const totalPages = Math.ceil(totalProducts / limit);
+    
+    // Client-side pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const paginatedProducts = filteredAndTransformedProducts.slice(startIndex, endIndex);
+
+    console.log('Products API - Pagination:', {
+      totalProducts,
+      totalPages,
+      currentPage: page,
+      startIndex,
+      endIndex,
+      returnedProducts: paginatedProducts.length
     });
 
     console.log('Products API - Successfully transformed products')
     
     return NextResponse.json({ 
-      products,
+      products: paginatedProducts,
       total: totalProducts,
       page,
       totalPages,
