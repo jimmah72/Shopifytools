@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getAllProducts, getProductsCostData } from '@/lib/shopify-api'
+import { getAllProducts, getProductsCostData, getProductsVariantCostData } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
 // Mark route as dynamic
@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '20')
     const search = searchParams.get('search') || ''
     const fetchCosts = searchParams.get('fetchCosts') === 'true'
+    const fetchVariantCosts = searchParams.get('fetchVariantCosts') === 'true'
     
     // Sort and filter parameters
     const sortField = searchParams.get('sortField') || 'title'
@@ -83,6 +84,7 @@ export async function GET(request: NextRequest) {
       limit, 
       search, 
       fetchCosts, 
+      fetchVariantCosts,
       sortField, 
       sortDirection, 
       statusFilter, 
@@ -163,7 +165,7 @@ export async function GET(request: NextRequest) {
       const numericId = shopifyProduct.id.includes('gid://shopify/Product/') 
         ? shopifyProduct.id.replace('gid://shopify/Product/', '')
         : shopifyProduct.id;
-      
+
       // Get Shopify inventory cost - use fetched cost data if available
       const shopifyInventoryCost = fetchCosts ? costData[numericId] : undefined;
       
@@ -172,7 +174,7 @@ export async function GET(request: NextRequest) {
       
       // Use database values if they exist, otherwise default to SHOPIFY
       const costSource = existingProduct?.costSource || 'SHOPIFY';
-      const costOfGoodsSold = existingProduct?.costSource === 'MANUAL' 
+      const costOfGoodsSold = existingProduct?.costSource === 'MANUAL'
         ? (existingProduct.costOfGoodsSold || 0)
         : (shopifyInventoryCost !== undefined ? shopifyInventoryCost : 0);
       const handlingFees = existingProduct?.costSource === 'MANUAL' 
@@ -183,7 +185,7 @@ export async function GET(request: NextRequest) {
       // Calculate margin
       const totalCost = costOfGoodsSold + handlingFees + miscFees;
       const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
-
+      
       return {
         id: numericId,
         title: shopifyProduct.title,
@@ -196,17 +198,17 @@ export async function GET(request: NextRequest) {
               day: 'numeric'
             })
           : new Date().toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric'
-            }),
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        }),
         sellingPrice: price,
         costOfGoodsSold: costOfGoodsSold,
         handlingFees: handlingFees,
         miscFees: miscFees,
         margin: margin,
         costSource: costSource,
-        shopifyCostOfGoodsSold: shopifyInventoryCost,
+        shopifyCostOfGoodsSold: shopifyInventoryCost || null,
         shopifyHandlingFees: 0,
         sku: variant.sku || '',
         inventoryQuantity: variant.inventory_quantity || 0,
@@ -219,7 +221,8 @@ export async function GET(request: NextRequest) {
           return {
             id: numericVariantId,
             price: parseFloat(v.price) || 0,
-            inventory_cost: fetchCosts ? (costData[numericId] || 0) : 0,
+            inventory_cost: 0, // Will be populated with variant-specific costs when needed
+            cost: v.cost_per_item !== undefined ? parseFloat(v.cost_per_item) || 0 : 0,
             sku: v.sku || '',
             inventory_quantity: v.inventory_quantity || 0,
             inventory_tracked: (v as any).inventory_tracked || false
@@ -325,23 +328,61 @@ export async function GET(request: NextRequest) {
     if (fetchCosts && !needsCostDataForFiltering && paginatedProducts.length > 0) {
       console.log('Products API - Fetching cost data for current page products only');
       const pageProductIds = paginatedProducts.map(product => 
-        `gid://shopify/Product/${product.id}`
+        product.id.includes('gid://shopify/Product/') 
+          ? product.id.replace('gid://shopify/Product/', '')
+          : product.id
       );
-      const pageCostData = await getProductsCostData(formattedDomain, store.accessToken, pageProductIds);
       
-      // Update the paginated products with the cost data
-      paginatedProducts.forEach(product => {
-        const shopifyInventoryCost = pageCostData[product.id];
-        if (shopifyInventoryCost !== undefined) {
-          product.shopifyCostOfGoodsSold = shopifyInventoryCost;
-          
-          // Recalculate cost and margin if using Shopify source
-          if (product.costSource === 'SHOPIFY') {
-            product.costOfGoodsSold = shopifyInventoryCost || 0;
-            const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
-            product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
-          }
+      console.log('Products API - Fetching cost data for page product IDs:', pageProductIds);
+      const pageCostData = await getProductsCostData(store.domain, store.accessToken, pageProductIds);
+      
+      // Apply cost data to current page products
+      paginatedProducts.forEach((product: any) => {
+        const numericId = product.id.includes('gid://shopify/Product/') 
+          ? product.id.replace('gid://shopify/Product/', '')
+          : product.id;
+        
+        const shopifyInventoryCost = pageCostData[numericId];
+        
+        // Update the transformed product's shopify cost data
+        product.shopifyCostOfGoodsSold = shopifyInventoryCost || null;
+        
+        // If cost source is SHOPIFY, update the cost of goods sold
+        if (product.costSource === 'SHOPIFY') {
+          product.costOfGoodsSold = shopifyInventoryCost || 0;
+          const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
+          product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
         }
+      });
+    }
+
+    // If variant costs are requested, fetch them for current page only
+    if (fetchVariantCosts && paginatedProducts.length > 0) {
+      console.log('Products API - Fetching variant-specific cost data for current page products');
+      const pageProductIds = paginatedProducts.map(product => 
+        product.id.includes('gid://shopify/Product/') 
+          ? product.id.replace('gid://shopify/Product/', '')
+          : product.id
+      );
+      
+      const variantCostData = await getProductsVariantCostData(store.domain, store.accessToken, pageProductIds);
+      
+      // Apply variant cost data to current page products
+      paginatedProducts.forEach((product: any) => {
+        const numericId = product.id.includes('gid://shopify/Product/') 
+          ? product.id.replace('gid://shopify/Product/', '')
+          : product.id;
+        
+        const productVariantCosts = variantCostData[numericId] || {};
+        
+        // Update each variant with its specific cost
+        product.variants.forEach((variant: any) => {
+          const variantCost = productVariantCosts[variant.id];
+          if (variantCost !== undefined) {
+            variant.inventory_cost = variantCost;
+            variant.cost = variantCost;
+          }
+        });
       });
     }
 

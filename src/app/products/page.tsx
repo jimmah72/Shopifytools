@@ -24,6 +24,7 @@ interface Variant {
   id: string;
   price: number;
   inventory_cost: number;
+  cost?: number;
   sku: string;
   inventory_quantity: number;
   inventory_tracked: boolean;
@@ -94,18 +95,21 @@ export default function ProductsPage() {
   const [costDataFilter, setCostDataFilter] = useState<CostDataFilter>('all');
   const [showFilters, setShowFilters] = useState(false);
   
-  // Variant expansion state with localStorage persistence
-  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(() => {
+  // Variant expansion state (always start collapsed)
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+  
+  // Variant manual edits state with localStorage persistence
+  const [variantManualEdits, setVariantManualEdits] = useState<Record<string, Record<string, { cost?: number; handling?: number; misc?: number }>>>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem('expandedProducts');
-        return saved ? new Set(JSON.parse(saved)) : new Set();
+        const saved = localStorage.getItem('variantManualEdits');
+        return saved ? JSON.parse(saved) : {};
       } catch (error) {
-        console.warn('Failed to load expanded products from localStorage:', error);
-        return new Set();
+        console.warn('Failed to load variant manual edits from localStorage:', error);
+        return {};
       }
     }
-    return new Set();
+    return {};
   });
 
   const PRODUCTS_PER_PAGE = 20;
@@ -168,6 +172,9 @@ export default function ProductsPage() {
       setTotalPages(data.totalPages || Math.ceil(data.products.length / PRODUCTS_PER_PAGE));
       setTotalProducts(data.total || data.products.length);
       
+      // Reset expanded products when loading new page data
+      setExpandedProducts(new Set());
+      
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
@@ -199,16 +206,52 @@ export default function ProductsPage() {
     }
   }, [currentPage, debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, fetchProducts]);
 
-  // Save expanded products to localStorage whenever it changes
+  // Save variant manual edits to localStorage whenever they change
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('expandedProducts', JSON.stringify([...expandedProducts]));
+        localStorage.setItem('variantManualEdits', JSON.stringify(variantManualEdits));
       } catch (error) {
-        console.warn('Failed to save expanded products to localStorage:', error);
+        console.warn('Failed to save variant manual edits to localStorage:', error);
       }
     }
-  }, [expandedProducts]);
+  }, [variantManualEdits]);
+
+  // Function to fetch variant costs for a specific product
+  const fetchVariantCostsForProduct = useCallback(async (productId: string) => {
+    try {
+      // Use the existing getProductsVariantCostData function via a direct API call
+      const response = await fetch(`/api/products/${productId}/variants/costs`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch variant costs');
+      }
+      
+      const variantCosts = await response.json();
+      
+      // Update the specific product's variants with cost data and apply any manual edits
+      setProducts(prevProducts => 
+        prevProducts.map(product => 
+          product.id === productId 
+            ? {
+                ...product,
+                variants: product.variants.map(variant => {
+                  const shopifyCost = variantCosts[variant.id];
+                  const manualEdits = variantManualEdits[productId]?.[variant.id];
+                  
+                  return {
+                    ...variant,
+                    inventory_cost: shopifyCost || variant.inventory_cost,
+                    cost: manualEdits?.cost !== undefined ? manualEdits.cost : (shopifyCost || variant.cost)
+                  };
+                })
+              }
+            : product
+        )
+      );
+    } catch (error) {
+      console.error('Error fetching variant costs for product:', productId, error);
+    }
+  }, []);
 
   // Variant expansion handlers
   const toggleProductExpansion = useCallback((productId: string) => {
@@ -218,10 +261,15 @@ export default function ProductsPage() {
         newSet.delete(productId);
       } else {
         newSet.add(productId);
+        // Fetch variant costs when expanding (only if not already fetched)
+        const product = products.find(p => p.id === productId);
+        if (product && product.variants.some(v => v.inventory_cost === 0)) {
+          fetchVariantCostsForProduct(productId);
+        }
       }
       return newSet;
     });
-  }, []);
+  }, [products, fetchVariantCostsForProduct]);
 
   const isProductExpanded = useCallback((productId: string) => {
     return expandedProducts.has(productId);
@@ -352,7 +400,7 @@ export default function ProductsPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ costSource: newSource }),
-      });
+        });
 
       if (!response.ok) {
         throw new Error('Failed to save cost source');
@@ -437,19 +485,19 @@ export default function ProductsPage() {
           {/* Top row: Search, Sort, Filters toggle */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <TextField
-                placeholder="Search products..."
-                value={searchTerm}
-                onChange={handleSearchChange}
-                sx={{ width: 300 }}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search />
-                    </InputAdornment>
-                  ),
-                }}
-              />
+          <TextField
+            placeholder="Search products..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            sx={{ width: 300 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search />
+                </InputAdornment>
+              ),
+            }}
+          />
               
               {/* Sort Control */}
               <FormControl sx={{ minWidth: 150 }}>
@@ -488,10 +536,10 @@ export default function ProductsPage() {
               >
                 Filters {getActiveFilterCount > 0 && `(${getActiveFilterCount})`}
               </Button>
-              
-              <Typography variant="body2" color="text.secondary">
-                {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}
-              </Typography>
+          
+          <Typography variant="body2" color="text.secondary">
+            {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}
+          </Typography>
             </Box>
           </Box>
 

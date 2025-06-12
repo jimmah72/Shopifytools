@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Table,
   TableBody,
@@ -23,6 +23,7 @@ interface Variant {
   sku: string;
   inventory_quantity: number;
   inventory_tracked: boolean;
+  cost?: number;
 }
 
 interface Product {
@@ -71,6 +72,9 @@ export function CostOfGoodsTable({
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
   const [savingProducts, setSavingProducts] = useState<Set<string>>(new Set());
+  const [variantLoading, setVariantLoading] = useState<{ [variantId: string]: boolean }>({});
+  const [variantErrors, setVariantErrors] = useState<{ [variantId: string]: string | null }>({});
+  const [variantEdits, setVariantEdits] = useState<{ [variantId: string]: { cost?: number; handling?: number; misc?: number } }>({});
   const { theme } = useTheme();
 
   const formatCurrency = (amount: number) => {
@@ -192,33 +196,81 @@ export function CostOfGoodsTable({
     return product.shopifyCostOfGoodsSold !== null && product.shopifyCostOfGoodsSold !== undefined;
   };
 
+  // Handler for auto-saving variant fields
+  const handleVariantFieldChange = async (
+    productId: string,
+    variantId: string,
+    field: 'cost' | 'handling' | 'misc',
+    value: number
+  ) => {
+    setVariantEdits(prev => ({
+      ...prev,
+      [variantId]: {
+        ...prev[variantId],
+        [field]: value
+      }
+    }));
+  };
+
+  const handleVariantFieldBlur = async (
+    productId: string,
+    variantId: string,
+    field: 'cost' | 'handling' | 'misc',
+    value: number
+  ) => {
+    setVariantLoading(prev => ({ ...prev, [variantId]: true }));
+    setVariantErrors(prev => ({ ...prev, [variantId]: null }));
+    try {
+      // PATCH to /api/products/[shopifyProductId]/variants/[shopifyVariantId]/costs
+      const payload: any = {};
+      if (field === 'cost') payload.cost = value;
+      if (field === 'handling') payload.handling = value;
+      if (field === 'misc') payload.misc = value;
+      payload.source = products.find(p => p.id === productId)?.costSource || 'SHOPIFY';
+      const res = await fetch(`/api/products/${productId}/variants/${variantId}/costs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        throw new Error('Failed to save variant');
+      }
+      // Optionally update local state with new value
+      setVariantEdits(prev => ({ ...prev, [variantId]: {} }));
+    } catch (err) {
+      setVariantErrors(prev => ({ ...prev, [variantId]: 'Failed to save' }));
+    } finally {
+      setVariantLoading(prev => ({ ...prev, [variantId]: false }));
+    }
+  };
+
   return (
-    <div className="rounded-lg border border-gray-600 overflow-hidden bg-gray-900">
-      <Table>
-        <TableHeader className="bg-gray-800">
-          <TableRow className="border-b-2 border-gray-600 hover:bg-transparent">
-            <TableHead className="w-[40px] h-10">
-              <input
-                type="checkbox"
-                checked={selectedProducts.size === products.length}
-                onChange={handleSelectAll}
-                className="rounded border-gray-600 bg-transparent"
-              />
-            </TableHead>
-            <TableHead className="font-medium text-gray-400 w-[400px] text-left">Products & Variants</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Status</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Last Edited</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Selling Price</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Source</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[130px] text-left">Cost of Goods Sold</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[130px] text-left">Handling Fees</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[130px] text-left">Misc</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Margin</TableHead>
-            <TableHead className="font-medium text-gray-400 w-[100px] text-left">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {products.map((product) => (
+      <div className="rounded-lg border border-gray-600 overflow-hidden bg-gray-900">
+        <Table>
+          <TableHeader className="bg-gray-800">
+            <TableRow className="border-b-2 border-gray-600 hover:bg-transparent">
+              <TableHead className="w-[40px] h-10">
+                <input
+                  type="checkbox"
+                  checked={selectedProducts.size === products.length}
+                  onChange={handleSelectAll}
+                  className="rounded border-gray-600 bg-transparent"
+                />
+              </TableHead>
+              <TableHead className="font-medium text-gray-400 w-[400px] text-left">Products & Variants</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Status</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Last Edited</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Selling Price</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Source</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Cost of Goods Sold</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Handling Fees</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[130px] text-left">Misc</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Margin</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[100px] text-left">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {products.map((product) => (
             <React.Fragment key={product.id}>
               {/* Main Product Row */}
               <TableRow 
@@ -269,7 +321,7 @@ export function CostOfGoodsTable({
                       </div>
                     )}
                     <div className="flex flex-col">
-                      <span className="font-medium text-sm text-gray-200">{product.title}</span>
+                    <span className="font-medium text-sm text-gray-200">{product.title}</span>
                       {product.variants.length > 1 && (
                         <span className="text-xs text-gray-500">
                           {product.variants.length} variants
@@ -400,79 +452,113 @@ export function CostOfGoodsTable({
               </TableRow>
 
               {/* Variant Rows (shown when expanded) */}
-              {expandedProducts.has(product.id) && product.variants.map((variant, index) => (
-                <TableRow 
-                  key={`${product.id}-variant-${variant.id}`}
-                  className="border-b border-gray-700 bg-gray-850 hover:bg-gray-800/50 transition-colors"
-                >
-                  <TableCell className="h-10 pl-8">
-                    {/* Empty cell for checkbox column */}
-                  </TableCell>
-                  <TableCell className="pl-8">
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-1 h-4 bg-gray-600 rounded-full"></div>
-                      <div className="flex flex-col">
-                        <span className="text-gray-300 font-medium">
-                          Variant {index + 1}
-                        </span>
-                        {variant.sku && (
-                          <span className="text-xs text-gray-500">SKU: {variant.sku}</span>
-                        )}
+              {expandedProducts.has(product.id) && product.variants.map((variant, index) => {
+                const isManual = product.costSource === 'MANUAL';
+                const isShopify = product.costSource === 'SHOPIFY';
+                const loading = variantLoading[variant.id];
+                const error = variantErrors[variant.id];
+                const edits = variantEdits[variant.id] || {};
+                return (
+                  <TableRow 
+                    key={`${product.id}-variant-${variant.id}`}
+                    className="border-b border-gray-700 bg-gray-850 hover:bg-gray-800/50 transition-colors"
+                  >
+                    <TableCell className="h-10 pl-8" />
+                    <TableCell className="pl-8">
+                      <div className="flex items-center gap-3 text-sm">
+                        <div className="w-1 h-4 bg-gray-600 rounded-full"></div>
+                        <div className="flex flex-col">
+                          <span className="text-gray-300 font-medium">
+                            {variant.sku || `Variant ${index + 1}`}
+                          </span>
+                          {variant.sku && (
+                            <span className="text-xs text-gray-500">SKU: {variant.sku}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Status - inherit from parent */}
-                    —
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Last Edited - inherit from parent */}
-                    —
-                  </TableCell>
-                  <TableCell className="text-right font-medium text-sm">
-                    {formatCurrency(variant.price)}
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Source - inherit from parent */}
-                    —
-                  </TableCell>
-                  <TableCell>
-                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                      {formatCurrency(variant.inventory_cost)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Handling Fees - variants don't have individual handling fees */}
-                    —
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Misc Fees - variants don't have individual misc fees */}
-                    —
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Margin - calculate from variant price and cost */}
-                    {variant.price > 0 ? (
-                      <span className={
-                        ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 70 ? 'text-green-400' :
-                        ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 50 ? 'text-yellow-400' :
-                        'text-red-400'
-                      }>
-                        {(((variant.price - variant.inventory_cost) / variant.price) * 100).toFixed(2)}%
-                      </span>
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {/* Actions - variants don't have individual save actions */}
-                    —
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-500">—</TableCell>
+                    <TableCell className="text-sm text-gray-500">—</TableCell>
+                    <TableCell className="text-right font-medium text-sm">{formatCurrency(variant.price)}</TableCell>
+                    <TableCell className="text-sm text-gray-500">—</TableCell>
+                    {/* Cost */}
+                    <TableCell>
+                      {isManual ? (
+                        <Input
+                          type="text"
+                          value={edits.cost !== undefined ? formatCurrencyForInput(edits.cost) : formatCurrencyForInput(variant.cost ?? variant.inventory_cost)}
+                          onChange={e => handleVariantFieldChange(product.id, variant.id, 'cost', parseCurrencyInput(e.target.value))}
+                          onBlur={e => handleVariantFieldBlur(product.id, variant.id, 'cost', parseCurrencyInput(e.target.value))}
+                          className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                          placeholder="0.00"
+                          disabled={loading}
+                        />
+                      ) : (
+                        <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                          {formatCurrency(variant.cost ?? variant.inventory_cost)}
+                        </div>
+                      )}
+                      {loading && <span className="ml-2 text-xs text-blue-400">Saving…</span>}
+                      {error && <span className="ml-2 text-xs text-red-400">{error}</span>}
+                    </TableCell>
+                    {/* Handling */}
+                    <TableCell>
+                      {isManual ? (
+                        <Input
+                          type="text"
+                          value={edits.handling !== undefined ? formatCurrencyForInput(edits.handling) : formatCurrencyForInput(variantEdits[variant.id]?.handling || 0)}
+                          onChange={e => handleVariantFieldChange(product.id, variant.id, 'handling', parseCurrencyInput(e.target.value))}
+                          onBlur={e => handleVariantFieldBlur(product.id, variant.id, 'handling', parseCurrencyInput(e.target.value))}
+                          className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                          placeholder="0.00"
+                          disabled={loading}
+                        />
+                      ) : (
+                        <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                          {formatCurrency(variantEdits[variant.id]?.handling || 0)}
+                        </div>
+                      )}
+                    </TableCell>
+                    {/* Misc */}
+                    <TableCell>
+                      {isManual || isShopify ? (
+                        <Input
+                          type="text"
+                          value={edits.misc !== undefined ? formatCurrencyForInput(edits.misc) : formatCurrencyForInput(variantEdits[variant.id]?.misc || 0)}
+                          onChange={e => handleVariantFieldChange(product.id, variant.id, 'misc', parseCurrencyInput(e.target.value))}
+                          onBlur={e => handleVariantFieldBlur(product.id, variant.id, 'misc', parseCurrencyInput(e.target.value))}
+                          className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                          placeholder="0.00"
+                          disabled={loading}
+                        />
+                      ) : (
+                        <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                          {formatCurrency(variantEdits[variant.id]?.misc || 0)}
+                        </div>
+                      )}
+                    </TableCell>
+                    {/* Margin */}
+                    <TableCell className="text-sm text-gray-500">
+                      {variant.price > 0 ? (
+                        <span className={
+                          ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 70 ? 'text-green-400' :
+                          ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 50 ? 'text-yellow-400' :
+                          'text-red-400'
+                        }>
+                          {(((variant.price - variant.inventory_cost) / variant.price) * 100).toFixed(2)}%
+                        </span>
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-500">—</TableCell>
+                  </TableRow>
+                );
+              })}
             </React.Fragment>
-          ))}
-        </TableBody>
-      </Table>
+            ))}
+          </TableBody>
+        </Table>
     </div>
   );
 } 

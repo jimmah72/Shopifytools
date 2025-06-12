@@ -1,0 +1,13 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Do not pause and wait for confirmation before begining to work on a fix. As an example:
+
+Ill start by updating the backend to fetch and map variant cost data.
+Once thats done, the frontend will display the correct value for each variant row.
+Lets proceed!
+
+
+you should not wait for input here, just start work

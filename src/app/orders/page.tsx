@@ -264,9 +264,9 @@ export default function OrdersPage() {
               {metricsLoading ? (
                 <CircularProgress size={24} />
               ) : (
-                <Typography variant="h5" component="span">
+              <Typography variant="h5" component="span">
                   {formatCurrency(metrics?.totalRevenue || 0)}
-                </Typography>
+              </Typography>
               )}
             </Stack>
           </Card>
@@ -282,9 +282,9 @@ export default function OrdersPage() {
               {metricsLoading ? (
                 <CircularProgress size={24} />
               ) : (
-                <Typography variant="h5" component="span">
+              <Typography variant="h5" component="span">
                   {metrics?.totalOrdersCount || 0}
-                </Typography>
+              </Typography>
               )}
             </Stack>
           </Card>
@@ -300,9 +300,9 @@ export default function OrdersPage() {
               {metricsLoading ? (
                 <CircularProgress size={24} />
               ) : (
-                <Typography variant="h5" component="span">
+              <Typography variant="h5" component="span">
                   {formatCurrency(metrics?.totalShippingCosts || 0)}
-                </Typography>
+              </Typography>
               )}
             </Stack>
           </Card>
@@ -318,9 +318,9 @@ export default function OrdersPage() {
               {metricsLoading ? (
                 <CircularProgress size={24} />
               ) : (
-                <Typography variant="h5" component="span">
+              <Typography variant="h5" component="span">
                   {formatCurrency(metrics?.averageOrderValue || 0)}
-                </Typography>
+              </Typography>
               )}
             </Stack>
           </Card>

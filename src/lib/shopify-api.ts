@@ -1139,6 +1139,136 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
   return costMap;
 }
 
+// New function to fetch variant-specific cost data for products on current page
+export async function getProductsVariantCostData(shop: string, accessToken: string, productIds: string[]): Promise<Record<string, Record<string, number>>> {
+  console.log(`Shopify API - Fetching variant-specific cost data for ${productIds.length} products on current page`);
+  
+  const costMap: Record<string, Record<string, number>> = {};
+
+  // Process products in smaller batches since we're fetching more data per product
+  const batchSize = 25;
+  for (let i = 0; i < productIds.length; i += batchSize) {
+    const batch = productIds.slice(i, i + batchSize);
+    console.log(`Shopify API - Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(productIds.length/batchSize)} (${batch.length} products)`);
+
+    // Create individual queries for each product to get ALL variant cost data
+    const promises = batch.map(async (productId: string) => {
+      const query = `
+        query getProductVariantCosts($id: ID!) {
+          product(id: $id) {
+            id
+            variants(first: 250) {
+              edges {
+                node {
+                  id
+                  inventoryItem {
+                    id
+                    unitCost {
+                      amount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      // Extract numeric ID if it's in GraphQL format, otherwise use as-is
+      const numericProductId = productId.includes('gid://shopify/Product/') 
+        ? productId.replace('gid://shopify/Product/', '')
+        : productId;
+
+      const variables: { id: string } = { id: `gid://shopify/Product/${numericProductId}` };
+
+      try {
+        const result: any = await retryWithBackoff(async (): Promise<any> => {
+          validateEnvironmentVariables();
+          const formattedDomain = formatShopDomain(shop);
+          
+          const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/graphql.json`;
+          
+          const response: Response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'X-Shopify-Access-Token': accessToken,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              query,
+              variables
+            })
+          });
+
+          if (!response.ok) {
+            console.error(`Shopify API - GraphQL error for product ${productId}:`, response.statusText)
+            throw new Error(`Shopify API Error: ${response.statusText}`);
+          }
+
+          return await response.json();
+        });
+
+        if (result.errors) {
+          console.log(`Shopify API - GraphQL errors for product ${numericProductId}:`, result.errors);
+          return { productId: numericProductId, variantCosts: {} };
+        }
+
+        const product = result.data?.product;
+        if (product && product.variants.edges.length > 0) {
+          const variantCosts: Record<string, number> = {};
+          
+          // Process ALL variants, not just the first one
+          for (const variantEdge of product.variants.edges) {
+            const variant = variantEdge.node;
+            const variantId = variant.id.includes('gid://shopify/ProductVariant/') 
+              ? variant.id.replace('gid://shopify/ProductVariant/', '')
+              : variant.id;
+            
+            const unitCost = variant.inventoryItem?.unitCost?.amount;
+            
+            // Only set cost if we have valid cost data
+            if (unitCost && unitCost !== '0' && unitCost !== '0.00') {
+              const cost = parseFloat(unitCost);
+              if (cost > 0) {
+                variantCosts[variantId] = cost;
+                console.log(`Shopify API - Product ${numericProductId}, Variant ${variantId}: Found cost $${cost}`);
+              }
+            }
+          }
+          
+          return { productId: numericProductId, variantCosts };
+        }
+
+        // Return empty variant costs for products without cost data
+        return { productId: numericProductId, variantCosts: {} };
+
+      } catch (error) {
+        console.error(`Shopify API - Error fetching costs for product ${numericProductId}:`, error);
+        return { productId: numericProductId, variantCosts: {} };
+      }
+    });
+
+    // Wait for batch to complete
+    const batchResults = await Promise.all(promises);
+    
+    // Add results to cost map
+    batchResults.forEach((result) => {
+      if (result && result.productId) {
+        costMap[result.productId] = result.variantCosts;
+      }
+    });
+
+    // Small delay between batches to be respectful to the API
+    if (i + batchSize < productIds.length) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  const totalVariantsWithCosts = Object.values(costMap).reduce((total, variantCosts) => total + Object.keys(variantCosts).length, 0);
+  console.log(`Shopify API - Successfully fetched variant-specific cost data for ${Object.keys(costMap).length} products (${totalVariantsWithCosts} variants with costs)`);
+  return costMap;
+}
+
 // Function to get counts only (lighter weight for metrics)
 export async function getCounts(shop: string, accessToken: string): Promise<{
   totalOrders: number;

@@ -116,30 +116,9 @@ export async function PATCH(
       )
     }
 
-    // Always try to get Shopify cost first
+    // When user manually saves a cost, always save it as MANUAL
     let cost = data.cost
-    let source = data.source
-    
-    try {
-      const shopifyVariant = await getVariant(store.domain, store.accessToken, variantId)
-      const shopifyCost = parseFloat(shopifyVariant.cost_per_item)
-      
-      // If we have a valid Shopify cost, use it
-      if (!isNaN(shopifyCost) && shopifyCost > 0) {
-        cost = shopifyCost
-        source = 'SHOPIFY'
-      } else if (source !== 'MANUAL') {
-        // If no valid Shopify cost and not explicitly manual, default to manual with provided cost
-        source = 'MANUAL'
-      }
-    } catch (error) {
-      console.error('Error fetching Shopify variant cost:', error)
-      // If Shopify fetch fails and source wasn't explicitly set to MANUAL,
-      // fall back to manual with provided cost
-      if (source !== 'MANUAL') {
-        source = 'MANUAL'
-      }
-    }
+    let source = 'MANUAL' // Always save manual edits as MANUAL source
 
     // Update the product's variant
     const updatedProduct = await prisma.product.update({
