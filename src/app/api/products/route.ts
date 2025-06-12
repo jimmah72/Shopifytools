@@ -38,17 +38,6 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get query parameters with pagination support
-    const searchParams = request.nextUrl.searchParams
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '20')
-    const search = searchParams.get('search') || ''
-    
-    console.log('Products API - Query params:', { page, limit, search })
-    
-    // Cap limit for performance
-    const actualLimit = Math.min(limit, 50)
-    
     if (!store.domain || !store.accessToken) {
       return NextResponse.json(
         { error: 'Store configuration is incomplete. Please reconnect your Shopify store.' },
@@ -59,12 +48,27 @@ export async function GET(request: NextRequest) {
     // Format the store domain
     const formattedDomain = formatShopDomain(store.domain)
     
-    // Fetch products from Shopify
+    // Get query parameters with pagination support
+    const searchParams = request.nextUrl.searchParams
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const search = searchParams.get('search') || ''
+    
+    console.log('Products API - Query params:', { page, limit, search })
+    
+    // For better performance, we'll use a smaller default limit
+    const actualLimit = Math.min(limit, 50) // Cap at 50 products per request
+    
+    // Fetch products from Shopify with inventory costs
+    console.log('Products API - Fetching products from Shopify with inventory costs')
     const shopifyProducts = (await getProductsWithInventoryCosts(formattedDomain, store.accessToken, { 
-      limit: 250 // Fetch a reasonable amount
+      limit: actualLimit,
+      // Note: Shopify's REST API doesn't support offset pagination well
+      // For now, we'll fetch a reasonable amount and implement client-side pagination
+      // In production, consider using GraphQL API for better pagination
     })) as ShopifyProduct[]
 
-    console.log('Products API - Shopify products fetched:', shopifyProducts.length)
+    console.log('Products API - Total Shopify products fetched:', shopifyProducts.length)
 
     // Apply search filter if provided
     let filteredProducts = shopifyProducts;
@@ -77,28 +81,41 @@ export async function GET(request: NextRequest) {
           variant.sku?.toLowerCase().includes(searchLower)
         )
       );
+      console.log('Products API - Filtered products by search:', filteredProducts.length);
     }
 
+    // Implement client-side pagination
     const totalProducts = filteredProducts.length;
     const totalPages = Math.ceil(totalProducts / actualLimit);
     const startIndex = (page - 1) * actualLimit;
     const endIndex = startIndex + actualLimit;
     const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
 
-    // Transform products with default database values (no complex DB queries)
+    console.log('Products API - Pagination:', {
+      totalProducts,
+      totalPages,
+      currentPage: page,
+      startIndex,
+      endIndex,
+      returnedProducts: paginatedProducts.length
+    });
+
+    // Transform products with simple defaults (no database lookup)
     const products = paginatedProducts.map((shopifyProduct: ShopifyProduct) => {
       return {
         ...shopifyProduct,
+        // Add simple default database fields
         dbCostOfGoodsSold: 0,
         dbHandlingFees: 0,
         dbMiscFees: 0,
-        dbCostSource: 'SHOPIFY',
+        dbCostSource: 'MANUAL',
         dbLastEdited: new Date(),
         variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
           const inventoryCost = variant.inventory_cost ? parseFloat(variant.inventory_cost) : null
           const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
           const finalShopifyCost = inventoryCost || shopifyCost
           
+          // Try to use Shopify's cost if available and valid
           if (finalShopifyCost !== null && !isNaN(finalShopifyCost) && finalShopifyCost > 0) {
             return {
               ...variant,
@@ -108,6 +125,7 @@ export async function GET(request: NextRequest) {
             }
           }
           
+          // Default to manual mode with 0 cost
           return {
             ...variant,
             cost: 0,
@@ -118,7 +136,7 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    console.log('Products API - Returning Shopify data with', products.length, 'products')
+    console.log('Products API - Successfully fetched and transformed products')
     
     return NextResponse.json({ 
       products,

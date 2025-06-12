@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback, useMemo } from 'react';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
-import { Box, Typography, Pagination, TextField, InputAdornment, Skeleton, Alert, Button } from '@mui/material';
-import { Search, Refresh } from '@mui/icons-material';
+import { Box, Typography, CircularProgress, Pagination, TextField, InputAdornment, Skeleton } from '@mui/material';
+import { Search } from '@mui/icons-material';
 import { useDebounce } from '@/hooks/useDebounce';
 
 interface Product {
@@ -29,35 +29,19 @@ interface ProductsResponse {
   totalPages: number;
 }
 
-// Enhanced skeleton loader with shimmer effect
+// Skeleton loader component
 const ProductsTableSkeleton = () => (
   <Box sx={{ mt: 4 }}>
     {[...Array(10)].map((_, index) => (
-      <Box key={index} sx={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        py: 2, 
-        borderBottom: '1px solid #e0e0e0',
-        '& .skeleton': {
-          background: 'linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)',
-          backgroundSize: '200% 100%',
-          animation: 'shimmer 1.5s infinite'
-        }
-      }}>
-        <style jsx>{`
-          @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-          }
-        `}</style>
-        <Skeleton className="skeleton" variant="rectangular" width={40} height={40} sx={{ mr: 2 }} />
+      <Box key={index} sx={{ display: 'flex', alignItems: 'center', py: 2, borderBottom: '1px solid #e0e0e0' }}>
+        <Skeleton variant="rectangular" width={40} height={40} sx={{ mr: 2 }} />
         <Box sx={{ flex: 1 }}>
-          <Skeleton className="skeleton" variant="text" width="60%" height={24} />
-          <Skeleton className="skeleton" variant="text" width="40%" height={16} />
+          <Skeleton variant="text" width="60%" height={24} />
+          <Skeleton variant="text" width="40%" height={16} />
         </Box>
-        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
-        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
-        <Skeleton className="skeleton" variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
+        <Skeleton variant="text" width={80} height={20} sx={{ mx: 2 }} />
       </Box>
     ))}
   </Box>
@@ -76,22 +60,25 @@ export default function ProductsPage() {
   // Debounce search term to avoid too many API calls
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  // Transform product data
+  // Transform Shopify products into our format
   const transformProduct = useCallback((product: any): Product => {
     const variant = product.variants[0] || {};
     const shopifyCost = variant.cost || 0;
     const price = parseFloat(variant.price) || 0;
     
+    // Get database values if they exist, otherwise use Shopify values
     const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
     const dbHandlingFees = product.dbHandlingFees || 0;
     const dbMiscFees = product.dbMiscFees || 0;
     const costSource = product.dbCostSource || 'MANUAL';
     
+    // Calculate margin based on current source
     const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
     const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees;
     const totalCost = currentCost + currentHandling + dbMiscFees;
     const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
     
+    // Format the date to be more readable
     const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
     const formattedDate = lastEdited.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -129,8 +116,7 @@ export default function ProductsPage() {
       
       const response = await fetch(`/api/products?${params}`);
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.details || 'Failed to fetch products');
+        throw new Error('Failed to fetch products');
       }
       
       const data: ProductsResponse = await response.json();
@@ -152,7 +138,7 @@ export default function ProductsPage() {
 
   // Effect for initial load and search
   useEffect(() => {
-    setCurrentPage(1);
+    setCurrentPage(1); // Reset to first page when search changes
     fetchProducts(1, debouncedSearchTerm);
   }, [debouncedSearchTerm, fetchProducts]);
 
@@ -174,7 +160,7 @@ export default function ProductsPage() {
     return product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
   }, []);
 
-  // Optimized handlers with useCallback
+  // Optimized handlers with useCallback to prevent unnecessary re-renders
   const handleCostUpdate = useCallback((productId: string, newCost: number) => {
     setProducts(prevProducts => 
       prevProducts.map(p => 
@@ -250,6 +236,7 @@ export default function ProductsPage() {
         throw new Error('Failed to save costs');
       }
 
+      // Update the lastEdited date for this product
       setProducts(prevProducts => 
         prevProducts.map(p => 
           p.id === productId 
@@ -273,6 +260,7 @@ export default function ProductsPage() {
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
+    // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -280,18 +268,11 @@ export default function ProductsPage() {
     setSearchTerm(event.target.value);
   }, []);
 
-  const handleRefresh = useCallback(() => {
-    fetchProducts(currentPage, debouncedSearchTerm);
-  }, [fetchProducts, currentPage, debouncedSearchTerm]);
-
   if (error) {
     return (
       <Box sx={{ p: 4 }}>
         <Typography color="error" variant="h6">Error loading products</Typography>
         <Typography color="error">{error}</Typography>
-        <Button onClick={handleRefresh} sx={{ mt: 2 }}>
-          Retry
-        </Button>
       </Box>
     );
   }
@@ -299,21 +280,9 @@ export default function ProductsPage() {
   return (
     <Box sx={{ p: 4 }}>
       <Box sx={{ mb: 4 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h4">Cost Of Goods</Typography>
-          
-          {/* Refresh Button */}
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleRefresh}
-            disabled={loading}
-            startIcon={<Refresh />}
-          >
-            Refresh
-          </Button>
-        </Box>
-        
+        <Typography variant="h4" sx={{ mb: 2 }}>
+          Cost Of Goods
+        </Typography>
         <Typography color="text.secondary" sx={{ mb: 3 }}>
           Set up and manage your Cost of Goods Sold (COGS) to ensure precise Net Profit calculations.{' '}
           <a href="#" className="text-blue-500 hover:underline">
