@@ -44,6 +44,7 @@ model Product {
   miscFees        Float            @default(0)
   sellingPrice    Float            @default(0)
   status          String           @default("Active")
+  costSource      String           @default("SHOPIFY")
   orders          Order[]
   orderItems      OrderItem[]
   shippingRule    ShippingRule?    @relation(fields: [shippingRuleId], references: [id])

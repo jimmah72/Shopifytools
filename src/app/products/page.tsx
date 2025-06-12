@@ -15,6 +15,9 @@ interface Product {
   handlingFees: number;
   miscFees: number;
   margin: number;
+  costSource: 'SHOPIFY' | 'MANUAL';
+  shopifyCostOfGoodsSold?: number;
+  shopifyHandlingFees?: number;
 }
 
 export default function ProductsPage() {
@@ -34,12 +37,23 @@ export default function ProductsPage() {
       // Transform Shopify products into our format
       const transformedProducts = data.products.map((product: any) => {
         const variant = product.variants[0] || {};
-        const cost = variant.cost || 0;
+        const shopifyCost = variant.cost || 0;
         const price = parseFloat(variant.price) || 0;
-        const margin = price > 0 ? ((price - cost) / price) * 100 : 0;
+        
+        // Get database values if they exist, otherwise use Shopify values
+        const dbCostOfGoodsSold = product.dbCostOfGoodsSold || 0;
+        const dbHandlingFees = product.dbHandlingFees || 0;
+        const dbMiscFees = product.dbMiscFees || 0;
+        const costSource = product.dbCostSource || 'SHOPIFY';
+        
+        // Calculate margin based on current source
+        const currentCost = costSource === 'SHOPIFY' ? shopifyCost : dbCostOfGoodsSold;
+        const currentHandling = costSource === 'SHOPIFY' ? 0 : dbHandlingFees; // Shopify doesn't have handling fees
+        const totalCost = currentCost + currentHandling + dbMiscFees; // Misc is always from our DB
+        const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
         
         // Format the date to be more readable
-        const lastEdited = new Date(variant.costLastUpdated || new Date());
+        const lastEdited = new Date(product.dbLastEdited || variant.costLastUpdated || new Date());
         const formattedDate = lastEdited.toLocaleDateString('en-US', {
           year: 'numeric',
           month: 'short',
@@ -53,10 +67,13 @@ export default function ProductsPage() {
           status: 'Active' as const, // We can enhance this later
           lastEdited: formattedDate,
           sellingPrice: price,
-          costOfGoodsSold: cost,
-          handlingFees: 0, // This can be enhanced later
-          miscFees: 0, // This can be enhanced later
-          margin: margin
+          costOfGoodsSold: dbCostOfGoodsSold,
+          handlingFees: dbHandlingFees,
+          miscFees: dbMiscFees,
+          margin: margin,
+          costSource: costSource as 'SHOPIFY' | 'MANUAL',
+          shopifyCostOfGoodsSold: shopifyCost,
+          shopifyHandlingFees: 0 // Shopify doesn't have handling fees
         };
       });
 
@@ -73,6 +90,17 @@ export default function ProductsPage() {
     fetchProducts();
   }, []);
 
+  const recalculateMargin = (product: Product) => {
+    const currentCost = product.costSource === 'SHOPIFY' 
+      ? (product.shopifyCostOfGoodsSold || 0) 
+      : product.costOfGoodsSold;
+    const currentHandling = product.costSource === 'SHOPIFY' 
+      ? (product.shopifyHandlingFees || 0) 
+      : product.handlingFees;
+    const totalCost = currentCost + currentHandling + product.miscFees;
+    return product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+  };
+
   // Local state updates (don't persist until save)
   const handleCostUpdate = (productId: string, newCost: number) => {
     setProducts(prevProducts => 
@@ -81,9 +109,7 @@ export default function ProductsPage() {
           ? {
               ...p,
               costOfGoodsSold: newCost,
-              margin: p.sellingPrice > 0 
-                ? ((p.sellingPrice - newCost - p.handlingFees - p.miscFees) / p.sellingPrice) * 100 
-                : 0
+              margin: recalculateMargin({ ...p, costOfGoodsSold: newCost })
             }
           : p
       )
@@ -97,9 +123,7 @@ export default function ProductsPage() {
           ? {
               ...p,
               handlingFees: newFees,
-              margin: p.sellingPrice > 0 
-                ? ((p.sellingPrice - p.costOfGoodsSold - newFees - p.miscFees) / p.sellingPrice) * 100 
-                : 0
+              margin: recalculateMargin({ ...p, handlingFees: newFees })
             }
           : p
       )
@@ -113,9 +137,21 @@ export default function ProductsPage() {
           ? {
               ...p,
               miscFees: newFees,
-              margin: p.sellingPrice > 0 
-                ? ((p.sellingPrice - p.costOfGoodsSold - p.handlingFees - newFees) / p.sellingPrice) * 100 
-                : 0
+              margin: recalculateMargin({ ...p, miscFees: newFees })
+            }
+          : p
+      )
+    );
+  };
+
+  const handleCostSourceToggle = (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
+    setProducts(prevProducts => 
+      prevProducts.map(p => 
+        p.id === productId 
+          ? {
+              ...p,
+              costSource: newSource,
+              margin: recalculateMargin({ ...p, costSource: newSource })
             }
           : p
       )
@@ -123,7 +159,7 @@ export default function ProductsPage() {
   };
 
   // Save to our database only
-  const handleSave = async (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number }) => {
+  const handleSave = async (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number; costSource: string }) => {
     try {
       const response = await fetch(`/api/products/${productId}/costs`, {
         method: 'PATCH',
@@ -187,6 +223,7 @@ export default function ProductsPage() {
           onCostUpdate={handleCostUpdate}
           onHandlingFeesUpdate={handleHandlingFeesUpdate}
           onMiscFeesUpdate={handleMiscFeesUpdate}
+          onCostSourceToggle={handleCostSourceToggle}
           onSave={handleSave}
         />
       )}

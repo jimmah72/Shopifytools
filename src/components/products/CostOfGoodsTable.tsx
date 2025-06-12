@@ -27,6 +27,9 @@ interface Product {
   handlingFees: number;
   miscFees: number;
   margin: number;
+  costSource: 'SHOPIFY' | 'MANUAL';
+  shopifyCostOfGoodsSold?: number;
+  shopifyHandlingFees?: number;
 }
 
 interface CostOfGoodsTableProps {
@@ -34,10 +37,18 @@ interface CostOfGoodsTableProps {
   onCostUpdate: (productId: string, newCost: number) => void;
   onHandlingFeesUpdate: (productId: string, newFees: number) => void;
   onMiscFeesUpdate: (productId: string, newFees: number) => void;
-  onSave: (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number }) => Promise<void>;
+  onCostSourceToggle: (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => void;
+  onSave: (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number; costSource: string }) => Promise<void>;
 }
 
-export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate, onMiscFeesUpdate, onSave }: CostOfGoodsTableProps) {
+export function CostOfGoodsTable({ 
+  products, 
+  onCostUpdate, 
+  onHandlingFeesUpdate, 
+  onMiscFeesUpdate, 
+  onCostSourceToggle,
+  onSave 
+}: CostOfGoodsTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
@@ -89,6 +100,15 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
     markAsChanged(productId);
   };
 
+  const handleSourceToggle = (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+    
+    const newSource = product.costSource === 'SHOPIFY' ? 'MANUAL' : 'SHOPIFY';
+    onCostSourceToggle(productId, newSource);
+    markAsChanged(productId);
+  };
+
   const handleSave = async (productId: string) => {
     const product = products.find(p => p.id === productId);
     if (!product) return;
@@ -99,7 +119,8 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
       await onSave(productId, {
         costOfGoodsSold: product.costOfGoodsSold,
         handlingFees: product.handlingFees,
-        miscFees: product.miscFees
+        miscFees: product.miscFees,
+        costSource: product.costSource
       });
       
       setUnsavedChanges(prev => {
@@ -116,6 +137,25 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
         return newSet;
       });
     }
+  };
+
+  const getDisplayedCostOfGoodsSold = (product: Product) => {
+    if (product.costSource === 'SHOPIFY') {
+      return product.shopifyCostOfGoodsSold || 0;
+    }
+    return product.costOfGoodsSold;
+  };
+
+  const getDisplayedHandlingFees = (product: Product) => {
+    if (product.costSource === 'SHOPIFY') {
+      return product.shopifyHandlingFees || 0;
+    }
+    return product.handlingFees;
+  };
+
+  const isFieldEditable = (product: Product, field: 'cost' | 'handling' | 'misc') => {
+    if (field === 'misc') return true; // Misc is always editable
+    return product.costSource === 'MANUAL';
   };
 
   return (
@@ -219,27 +259,48 @@ export function CostOfGoodsTable({ products, onCostUpdate, onHandlingFeesUpdate,
                   {formatCurrency(product.sellingPrice)}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="bg-orange-500 text-black border-0 font-medium">
-                    MANUAL
-                  </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSourceToggle(product.id)}
+                    className={`h-8 px-3 text-xs font-medium border-0 ${
+                      product.costSource === 'SHOPIFY' 
+                        ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                        : 'bg-orange-500 text-black hover:bg-orange-600'
+                    }`}
+                  >
+                    {product.costSource}
+                  </Button>
                 </TableCell>
                 <TableCell>
-                  <Input
-                    type="number"
-                    value={product.costOfGoodsSold}
-                    onChange={(e) => handleCostChange(product.id, parseFloat(e.target.value) || 0)}
-                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="1"
-                  />
+                  {isFieldEditable(product, 'cost') ? (
+                    <Input
+                      type="number"
+                      value={getDisplayedCostOfGoodsSold(product)}
+                      onChange={(e) => handleCostChange(product.id, parseFloat(e.target.value) || 0)}
+                      className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                      step="1"
+                    />
+                  ) : (
+                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                      {getDisplayedCostOfGoodsSold(product)}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    type="number"
-                    value={product.handlingFees}
-                    onChange={(e) => handleHandlingFeesChange(product.id, parseFloat(e.target.value) || 0)}
-                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    step="1"
-                  />
+                  {isFieldEditable(product, 'handling') ? (
+                    <Input
+                      type="number"
+                      value={getDisplayedHandlingFees(product)}
+                      onChange={(e) => handleHandlingFeesChange(product.id, parseFloat(e.target.value) || 0)}
+                      className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                      step="1"
+                    />
+                  ) : (
+                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                      {getDisplayedHandlingFees(product)}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <Input

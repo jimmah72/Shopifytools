@@ -6,7 +6,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { costOfGoodsSold, handlingFees, miscFees } = await request.json();
+    const { costOfGoodsSold, handlingFees, miscFees, costSource } = await request.json();
     const shopifyProductId = params.id; // This is the Shopify product ID
 
     // Get the store to associate with the product
@@ -22,6 +22,7 @@ export async function PATCH(
     if (costOfGoodsSold !== undefined) updateData.costOfGoodsSold = costOfGoodsSold;
     if (handlingFees !== undefined) updateData.handlingFees = handlingFees;
     if (miscFees !== undefined) updateData.miscFees = miscFees;
+    if (costSource !== undefined) updateData.costSource = costSource;
     updateData.lastEdited = new Date();
 
     // Use upsert to either update existing product or create new one
@@ -36,6 +37,7 @@ export async function PATCH(
         price: 0, // Default price, will be updated when we sync
         cost: 0, // Default cost, will be updated when we sync
         status: 'ACTIVE',
+        costSource: costSource || 'SHOPIFY', // Default to SHOPIFY mode
         ...updateData
       },
     });

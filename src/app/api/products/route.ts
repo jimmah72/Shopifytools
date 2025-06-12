@@ -167,29 +167,39 @@ export async function GET(request: NextRequest) {
     } : null)
 
     // Fetch cost data from our database
-    const dbProducts = await prisma.$queryRaw<DbProduct[]>`
-      SELECT p.id,
-             json_agg(
-               json_build_object(
-                 'id', v.id,
-                 'cost', v.cost,
-                 'costSource', v."costSource",
-                 'costLastUpdated', v."costLastUpdated"
-               )
-             ) as variants
-      FROM "Product" p
-      LEFT JOIN "ProductVariant" v ON v."productId" = p.id
-      WHERE p."storeId" = ${store.id}
-      GROUP BY p.id
-    `
+    const dbProducts = await prisma.product.findMany({
+      where: { storeId: store.id },
+      select: {
+        shopifyId: true,
+        costOfGoodsSold: true,
+        handlingFees: true,
+        miscFees: true,
+        costSource: true,
+        lastEdited: true,
+        variants: {
+          select: {
+            id: true,
+            cost: true,
+            costSource: true,
+            costLastUpdated: true
+          }
+        }
+      }
+    })
 
     // Merge Shopify data with our cost data
     const products = shopifyProducts.map((shopifyProduct: ShopifyProduct) => {
-      const dbProduct = dbProducts.find(p => p.id === shopifyProduct.id)
+      const dbProduct = dbProducts.find(p => p.shopifyId === shopifyProduct.id)
       return {
         ...shopifyProduct,
+        // Add database fields to the product
+        dbCostOfGoodsSold: dbProduct?.costOfGoodsSold || 0,
+        dbHandlingFees: dbProduct?.handlingFees || 0,
+        dbMiscFees: dbProduct?.miscFees || 0,
+        dbCostSource: dbProduct?.costSource || 'SHOPIFY',
+        dbLastEdited: dbProduct?.lastEdited,
         variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
-          const dbVariant = dbProduct?.variants?.find((v: DbVariant) => v.id === variant.id)
+          const dbVariant = dbProduct?.variants?.find((v) => v.id === variant.id)
           const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
           
           console.log(`Processing variant ${variant.id}:`, {
