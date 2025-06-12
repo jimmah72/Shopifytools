@@ -53,11 +53,11 @@ interface ShopifyOrder {
   processing_method?: string;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   console.log('Orders API - GET request received')
   
   // Add timeout protection
-  const timeoutPromise = new Promise((_, reject) => {
+  const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => reject(new Error('Request timeout - orders taking too long to fetch')), 25000) // 25 second timeout
   });
 
@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchOrdersWithTimeout(request: NextRequest) {
+async function fetchOrdersWithTimeout(request: NextRequest): Promise<NextResponse> {
   const searchParams = request.nextUrl.searchParams
   const page = parseInt(searchParams.get('page') || '1')
   const limit = parseInt(searchParams.get('limit') || '20') // Reduced default limit
