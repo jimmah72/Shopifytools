@@ -3,30 +3,64 @@
 import React, { useState } from 'react';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
 
-interface Product {
-  id: string;
-  title: string;
-  image?: string;
-  status: 'Active' | 'Draft' | 'Archived';
-  lastEdited: string;
-  sellingPrice: number;
-  costOfGoodsSold: number;
-  handlingFees: number;
-  miscFees: number;
-  margin: number;
-  costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number | null;
-  shopifyHandlingFees?: number;
+namespace CostsContent {
+  export interface Variant {
+    id: string;
+    price: number;
+    inventory_cost: number;
+    cost?: number;
+    sku: string;
+    inventory_quantity: number;
+    inventory_tracked: boolean;
+  }
+
+  export interface Product {
+    id: string;
+    title: string;
+    image?: string;
+    status: 'Active' | 'Draft' | 'Archived';
+    lastEdited: string;
+    sellingPrice: number;
+    costOfGoodsSold: number;
+    handlingFees: number;
+    miscFees: number;
+    margin: number;
+    costSource: 'SHOPIFY' | 'MANUAL';
+    shopifyCostOfGoodsSold?: number | null;
+    shopifyHandlingFees?: number;
+    variants: Variant[];
+  }
 }
 
 const CostsContent: React.FC = () => {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<CostsContent.Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
-  const calculateMargin = (product: Product) => {
+  const calculateMargin = (product: CostsContent.Product) => {
     const totalCosts = product.costOfGoodsSold + product.handlingFees + product.miscFees;
     return ((product.sellingPrice - totalCosts) / product.sellingPrice) * 100;
+  };
+
+  const handleToggleExpansion = (productId: string) => {
+    setExpandedProducts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(productId)) {
+        newSet.delete(productId);
+      } else {
+        newSet.add(productId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleExpandAll = () => {
+    setExpandedProducts(new Set(products.map(p => p.id)));
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedProducts(new Set());
   };
 
   const handleCostUpdate = async (productId: string, newCost: number) => {
@@ -130,6 +164,10 @@ const CostsContent: React.FC = () => {
           onMiscFeesUpdate={handleMiscFeesUpdate}
           onCostSourceToggle={handleCostSourceToggle}
           onSave={handleSave}
+          expandedProducts={expandedProducts}
+          onToggleExpansion={handleToggleExpansion}
+          onExpandAll={handleExpandAll}
+          onCollapseAll={handleCollapseAll}
         />
       )}
     </div>

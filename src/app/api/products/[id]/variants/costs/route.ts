@@ -74,8 +74,8 @@ export async function GET(
           }
         });
       } else {
-        // SHOPIFY mode: Fetch fresh Shopify data for display
-        console.log(`Variant Costs API - Fetching fresh Shopify costs for display`);
+        // SHOPIFY mode: Always fetch fresh Shopify data for display (ignore saved manual values)
+        console.log(`Variant Costs API - Product in SHOPIFY mode - fetching fresh Shopify costs for display`);
         const shopifyVariantCosts = await getProductsVariantCostData(
           formattedDomain, 
           store.accessToken, 
@@ -84,7 +84,7 @@ export async function GET(
         
         const productShopifyCosts = shopifyVariantCosts[productId] || {};
         Object.assign(finalVariantCosts, productShopifyCosts);
-        console.log(`Variant Costs API - Using Shopify costs for ${Object.keys(productShopifyCosts).length} variants`);
+        console.log(`Variant Costs API - Using fresh Shopify costs for ${Object.keys(productShopifyCosts).length} variants (ignoring any saved manual values)`);
       }
     } else {
       // No saved product, fetch from Shopify

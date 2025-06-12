@@ -16,40 +16,43 @@ import { ChevronRight, ChevronDown } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from '@/contexts/ThemeContext';
 
-interface Variant {
-  id: string;
-  price: number;
-  inventory_cost: number;
-  sku: string;
-  inventory_quantity: number;
-  inventory_tracked: boolean;
-  cost?: number;
-}
+namespace CostOfGoodsTable {
+  export interface Variant {
+    id: string;
+    price: number;
+    inventory_cost: number;
+    sku: string;
+    inventory_quantity: number;
+    inventory_tracked: boolean;
+    cost?: number;
+  }
 
-interface Product {
-  id: string;
-  title: string;
-  image?: string;
-  status: 'Active' | 'Draft' | 'Archived';
-  lastEdited: string;
-  sellingPrice: number;
-  costOfGoodsSold: number;
-  handlingFees: number;
-  miscFees: number;
-  margin: number;
-  costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number | null;
-  shopifyHandlingFees?: number;
-  variants: Variant[];
+  export interface Product {
+    id: string;
+    title: string;
+    image?: string;
+    status: 'Active' | 'Draft' | 'Archived';
+    lastEdited: string;
+    sellingPrice: number;
+    costOfGoodsSold: number;
+    handlingFees: number;
+    miscFees: number;
+    margin: number;
+    costSource: 'SHOPIFY' | 'MANUAL';
+    shopifyCostOfGoodsSold?: number | null;
+    shopifyHandlingFees?: number;
+    variants: Variant[];
+  }
 }
 
 interface CostOfGoodsTableProps {
-  products: Product[];
+  products: CostOfGoodsTable.Product[];
   onCostUpdate: (productId: string, newCost: number) => void;
   onHandlingFeesUpdate: (productId: string, newFees: number) => void;
   onMiscFeesUpdate: (productId: string, newFees: number) => void;
   onCostSourceToggle: (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => void;
   onSave: (productId: string, costs: { costOfGoodsSold: number; handlingFees: number; miscFees: number; costSource: string }) => Promise<void>;
+  onVariantUpdate?: (productId: string, variantId: string, updatedVariant: Partial<CostOfGoodsTable.Variant>) => void;
   // Variant expansion props
   expandedProducts: Set<string>;
   onToggleExpansion: (productId: string) => void;
@@ -64,6 +67,7 @@ export function CostOfGoodsTable({
   onMiscFeesUpdate, 
   onCostSourceToggle,
   onSave,
+  onVariantUpdate,
   expandedProducts,
   onToggleExpansion,
   onExpandAll,
@@ -171,26 +175,26 @@ export function CostOfGoodsTable({
     }
   };
 
-  const getDisplayedCostOfGoodsSold = (product: Product) => {
+  const getDisplayedCostOfGoodsSold = (product: CostOfGoodsTable.Product) => {
     if (product.costSource === 'SHOPIFY') {
       return product.shopifyCostOfGoodsSold || 0;
     }
     return product.costOfGoodsSold;
   };
 
-  const getDisplayedHandlingFees = (product: Product) => {
+  const getDisplayedHandlingFees = (product: CostOfGoodsTable.Product) => {
     if (product.costSource === 'SHOPIFY') {
       return 0;
     }
     return product.handlingFees;
   };
 
-  const isFieldEditable = (product: Product, field: 'cost' | 'handling' | 'misc') => {
+  const isFieldEditable = (product: CostOfGoodsTable.Product, field: 'cost' | 'handling' | 'misc') => {
     if (field === 'misc') return true; // Misc is always editable
     return product.costSource === 'MANUAL';
   };
 
-  const isShopifyCostAvailable = (product: Product) => {
+  const isShopifyCostAvailable = (product: CostOfGoodsTable.Product) => {
     // Cost data is available if shopifyCostOfGoodsSold is not null/undefined
     // null means no cost data available from Shopify
     return product.shopifyCostOfGoodsSold !== null && product.shopifyCostOfGoodsSold !== undefined;
@@ -218,16 +222,33 @@ export function CostOfGoodsTable({
     field: 'cost' | 'handling' | 'misc',
     value: number
   ) => {
+    console.log('=== FRONTEND VARIANT EDIT DEBUG ===');
+    console.log('productId:', productId);
+    console.log('variantId:', variantId);
+    console.log('field:', field);
+    console.log('value:', value);
+    
+    const product = products.find(p => p.id === productId);
+    console.log('Product found:', !!product);
+    if (product) {
+      console.log('Product costSource:', product.costSource);
+      console.log('Product variants:', product.variants.map(v => ({ id: v.id, sku: v.sku })));
+    }
+    
     setVariantLoading(prev => ({ ...prev, [variantId]: true }));
     setVariantErrors(prev => ({ ...prev, [variantId]: null }));
     try {
-      // PATCH to /api/products/[shopifyProductId]/variants/[shopifyVariantId]/costs
+      // PATCH to /api/products/[id]/variants/[variantId]
       const payload: any = {};
       if (field === 'cost') payload.cost = value;
       if (field === 'handling') payload.handling = value;
       if (field === 'misc') payload.misc = value;
       payload.source = products.find(p => p.id === productId)?.costSource || 'SHOPIFY';
-      const res = await fetch(`/api/products/${productId}/variants/${variantId}/costs`, {
+      
+      console.log('Making API call to:', `/api/products/${productId}/variants/${variantId}`);
+      console.log('Payload:', payload);
+      
+      const res = await fetch(`/api/products/${productId}/variants/${variantId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -235,8 +256,20 @@ export function CostOfGoodsTable({
       if (!res.ok) {
         throw new Error('Failed to save variant');
       }
-      // Optionally update local state with new value
+      
+      const savedVariant = await res.json();
+      console.log('Variant saved successfully:', savedVariant);
+      
+      // Update local state with the saved value
       setVariantEdits(prev => ({ ...prev, [variantId]: {} }));
+      
+      // Update the parent component's state via callback
+      if (onVariantUpdate) {
+        onVariantUpdate(productId, variantId, {
+          cost: savedVariant.cost,
+          inventory_cost: savedVariant.cost
+        });
+      }
     } catch (err) {
       setVariantErrors(prev => ({ ...prev, [variantId]: 'Failed to save' }));
     } finally {

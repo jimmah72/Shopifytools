@@ -20,31 +20,33 @@ import {
 import { Search, FilterList, Sort } from '@mui/icons-material';
 import { useDebounce } from '@/hooks/useDebounce';
 
-interface Variant {
-  id: string;
-  price: number;
-  inventory_cost: number;
-  cost?: number;
-  sku: string;
-  inventory_quantity: number;
-  inventory_tracked: boolean;
-}
+namespace ProductsPage {
+  export interface Variant {
+    id: string;
+    price: number;
+    inventory_cost: number;
+    cost?: number;
+    sku: string;
+    inventory_quantity: number;
+    inventory_tracked: boolean;
+  }
 
-interface Product {
-  id: string;
-  title: string;
-  image?: string;
-  status: 'Active' | 'Draft' | 'Archived';
-  lastEdited: string;
-  sellingPrice: number;
-  costOfGoodsSold: number;
-  handlingFees: number;
-  miscFees: number;
-  margin: number;
-  costSource: 'SHOPIFY' | 'MANUAL';
-  shopifyCostOfGoodsSold?: number | null;
-  shopifyHandlingFees?: number;
-  variants: Variant[];
+  export interface Product {
+    id: string;
+    title: string;
+    image?: string;
+    status: 'Active' | 'Draft' | 'Archived';
+    lastEdited: string;
+    sellingPrice: number;
+    costOfGoodsSold: number;
+    handlingFees: number;
+    miscFees: number;
+    margin: number;
+    costSource: 'SHOPIFY' | 'MANUAL';
+    shopifyCostOfGoodsSold?: number | null;
+    shopifyHandlingFees?: number;
+    variants: Variant[];
+  }
 }
 
 interface ProductsResponse {
@@ -79,7 +81,7 @@ const ProductsTableSkeleton = () => (
 );
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductsPage.Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -151,7 +153,7 @@ export default function ProductsPage() {
       const data: ProductsResponse = await response.json();
       
       // Transform products with a stable transform function
-      const transformedProducts = data.products.map((product: any): Product => ({
+      const transformedProducts = data.products.map((product: any): ProductsPage.Product => ({
         id: product.id.toString(),
         title: product.title,
         image: product.image,
@@ -261,10 +263,15 @@ export default function ProductsPage() {
         newSet.delete(productId);
       } else {
         newSet.add(productId);
-        // Fetch variant costs when expanding (only if not already fetched)
+        // Fetch variant costs when expanding
         const product = products.find(p => p.id === productId);
-        if (product && product.variants.some(v => v.inventory_cost === 0)) {
-          fetchVariantCostsForProduct(productId);
+        if (product) {
+          // Always fetch for SHOPIFY mode (fresh data) or if variants have no cost data
+          const shouldFetch = product.costSource === 'SHOPIFY' || 
+                            product.variants.some(v => v.inventory_cost === 0);
+          if (shouldFetch) {
+            fetchVariantCostsForProduct(productId);
+          }
         }
       }
       return newSet;
@@ -283,7 +290,7 @@ export default function ProductsPage() {
     setExpandedProducts(new Set());
   }, []);
 
-  const recalculateMargin = useCallback((product: Product) => {
+  const recalculateMargin = useCallback((product: ProductsPage.Product) => {
     const currentCost = product.costSource === 'SHOPIFY' 
       ? (product.shopifyCostOfGoodsSold || 0) 
       : product.costOfGoodsSold;
@@ -378,6 +385,23 @@ export default function ProductsPage() {
     }
   }, []);
 
+  const handleVariantUpdate = useCallback((productId: string, variantId: string, updatedVariant: Partial<ProductsPage.Variant>) => {
+    setProducts(prevProducts => 
+      prevProducts.map(p => 
+        p.id === productId 
+          ? {
+              ...p,
+              variants: p.variants.map(v => 
+                v.id === variantId 
+                  ? { ...v, ...updatedVariant }
+                  : v
+              )
+            }
+          : p
+      )
+    );
+  }, []);
+
   const handleCostSourceToggle = useCallback(async (productId: string, newSource: 'SHOPIFY' | 'MANUAL') => {
     // Update local state immediately for responsive UI
     setProducts(prevProducts => 
@@ -405,6 +429,11 @@ export default function ProductsPage() {
       if (!response.ok) {
         throw new Error('Failed to save cost source');
       }
+
+      // If product is expanded and we switched modes, refetch variant costs to show correct data
+      if (expandedProducts.has(productId)) {
+        fetchVariantCostsForProduct(productId);
+      }
     } catch (error) {
       console.error('Failed to save cost source change:', error);
       // Revert the local state change if save failed
@@ -420,7 +449,7 @@ export default function ProductsPage() {
         )
       );
     }
-  }, [recalculateMargin]);
+  }, [recalculateMargin, expandedProducts, fetchVariantCostsForProduct]);
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
@@ -649,6 +678,7 @@ export default function ProductsPage() {
             onMiscFeesUpdate={handleMiscFeesUpdate}
             onCostSourceToggle={handleCostSourceToggle}
             onSave={handleSave}
+            onVariantUpdate={handleVariantUpdate}
             expandedProducts={expandedProducts}
             onToggleExpansion={toggleProductExpansion}
             onExpandAll={expandAllProducts}
