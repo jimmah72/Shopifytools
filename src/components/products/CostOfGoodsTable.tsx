@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Table,
   TableBody,
@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ChevronRight, ChevronDown } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -71,12 +72,6 @@ export function CostOfGoodsTable({
   const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
   const [savingProducts, setSavingProducts] = useState<Set<string>>(new Set());
   const { theme } = useTheme();
-
-  // Debug: Log expansion state on first render and when it changes
-  useEffect(() => {
-    console.log('TABLE DEBUG - Expanded products:', Array.from(expandedProducts));
-    console.log('TABLE DEBUG - Products with variants:', products.filter(p => p.variants.length > 1).map(p => ({ id: p.id, title: p.title, variantCount: p.variants.length })));
-  }, [expandedProducts, products]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -224,160 +219,257 @@ export function CostOfGoodsTable({
         </TableHeader>
         <TableBody>
           {products.map((product) => (
-            <TableRow 
-              key={product.id} 
-              className={`border-b border-gray-600 hover:bg-gray-800 transition-colors ${
-                unsavedChanges.has(product.id) ? 'bg-yellow-900/20' : ''
-              }`}
-            >
-              <TableCell className="h-12">
-                <input
-                  type="checkbox"
-                  checked={selectedProducts.has(product.id)}
-                  onChange={() => handleSelectProduct(product.id)}
-                  className="rounded border-gray-600 bg-transparent"
-                />
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-3">
-                  {product.image ? (
-                    <div className="flex-shrink-0 relative w-8 h-8">
-                      <Image
-                        src={product.image}
-                        alt={product.title}
-                        fill
-                        className="object-cover rounded"
-                        sizes="32px"
-                      />
+            <React.Fragment key={product.id}>
+              {/* Main Product Row */}
+              <TableRow 
+                className={`border-b border-gray-600 hover:bg-gray-800 transition-colors ${
+                  unsavedChanges.has(product.id) ? 'bg-yellow-900/20' : ''
+                }`}
+              >
+                <TableCell className="h-12">
+                  <input
+                    type="checkbox"
+                    checked={selectedProducts.has(product.id)}
+                    onChange={() => handleSelectProduct(product.id)}
+                    className="rounded border-gray-600 bg-transparent"
+                  />
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-3">
+                    {/* Expand/Collapse button for products with multiple variants */}
+                    {product.variants.length > 1 ? (
+                      <button
+                        onClick={() => onToggleExpansion(product.id)}
+                        className="flex items-center justify-center w-5 h-5 rounded hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        title={`${expandedProducts.has(product.id) ? 'Collapse' : 'Expand'} variants`}
+                      >
+                        {expandedProducts.has(product.id) ? (
+                          <ChevronDown className="w-4 h-4 text-gray-400" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-gray-400" />
+                        )}
+                      </button>
+                    ) : (
+                      <div className="w-5 h-5" /> // Spacer for products without variants
+                    )}
+                    
+                    {product.image ? (
+                      <div className="flex-shrink-0 relative w-8 h-8">
+                        <Image
+                          src={product.image}
+                          alt={product.title}
+                          fill
+                          className="object-cover rounded"
+                          sizes="32px"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0">
+                        <span className="text-gray-400 text-xs">No img</span>
+                      </div>
+                    )}
+                    <div className="flex flex-col">
+                      <span className="font-medium text-sm text-gray-200">{product.title}</span>
+                      {product.variants.length > 1 && (
+                        <span className="text-xs text-gray-500">
+                          {product.variants.length} variants
+                        </span>
+                      )}
                     </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge 
+                    variant="outline" 
+                    className={`border-0 font-medium ${
+                      product.status === 'Active' 
+                        ? 'bg-green-400 text-black dark:bg-green-400 dark:text-black'
+                        : product.status === 'Draft'
+                        ? 'bg-yellow-400 text-black dark:bg-yellow-400 dark:text-black'
+                        : 'bg-gray-400 text-black dark:bg-gray-400 dark:text-black'
+                    }`}
+                  >
+                    {product.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-sm text-gray-400">{product.lastEdited}</TableCell>
+                <TableCell className="text-right font-medium text-sm">
+                  {formatCurrency(product.sellingPrice)}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSourceToggle(product.id)}
+                      className={`h-8 px-3 text-xs font-medium border-0 ${
+                        product.costSource === 'SHOPIFY' 
+                          ? isShopifyCostAvailable(product)
+                            ? 'bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-500 dark:text-white dark:hover:bg-blue-600' 
+                            : 'bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-500 dark:text-black dark:hover:bg-yellow-600'
+                          : 'bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:text-white dark:hover:bg-orange-600'
+                      }`}
+                      title={
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'Shopify cost data not available - consider switching to Manual mode'
+                          : ''
+                      }
+                    >
+                      {product.costSource}
+                    </Button>
+                    {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) && (
+                      <span className="text-xs text-yellow-400" title="Shopify cost data not available">
+                        ⚠️
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {isFieldEditable(product, 'cost') ? (
+                    <Input
+                      type="text"
+                      value={formatCurrencyForInput(getDisplayedCostOfGoodsSold(product))}
+                      onChange={(e) => handleCostChange(product.id, parseCurrencyInput(e.target.value))}
+                      className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                      placeholder="0.00"
+                    />
                   ) : (
-                    <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0">
-                      <span className="text-gray-400 text-xs">No img</span>
+                    <div 
+                      className={`w-28 h-8 flex items-center justify-end text-sm px-2 rounded ${
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'text-yellow-400 bg-yellow-900/20 border border-yellow-600'
+                          : 'text-gray-400 bg-gray-800'
+                      }`}
+                      title={
+                        product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
+                          ? 'No cost data available from Shopify'
+                          : ''
+                      }
+                    >
+                      {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) 
+                        ? 'N/A' 
+                        : formatCurrency(getDisplayedCostOfGoodsSold(product))
+                      }
                     </div>
                   )}
-                  <span className="font-medium text-sm text-gray-200">{product.title}</span>
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge 
-                  variant="outline" 
-                  className={`border-0 font-medium ${
-                    product.status === 'Active' 
-                      ? 'bg-green-400 text-black dark:bg-green-400 dark:text-black'
-                      : product.status === 'Draft'
-                      ? 'bg-yellow-400 text-black dark:bg-yellow-400 dark:text-black'
-                      : 'bg-gray-400 text-black dark:bg-gray-400 dark:text-black'
-                  }`}
-                >
-                  {product.status}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-sm text-gray-400">{product.lastEdited}</TableCell>
-              <TableCell className="text-right font-medium text-sm">
-                {formatCurrency(product.sellingPrice)}
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
+                </TableCell>
+                <TableCell>
+                  {isFieldEditable(product, 'handling') ? (
+                    <Input
+                      type="text"
+                      value={formatCurrencyForInput(getDisplayedHandlingFees(product))}
+                      onChange={(e) => handleHandlingFeesChange(product.id, parseCurrencyInput(e.target.value))}
+                      className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                      placeholder="0.00"
+                    />
+                  ) : (
+                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                      {formatCurrency(getDisplayedHandlingFees(product))}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Input
+                    type="text"
+                    value={formatCurrencyForInput(product.miscFees)}
+                    onChange={(e) => handleMiscFeesChange(product.id, parseCurrencyInput(e.target.value))}
+                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
+                    placeholder="0.00"
+                  />
+                </TableCell>
+                <TableCell className="text-left font-medium text-sm">
+                  <span className={
+                    product.margin >= 70 ? 'text-green-400' :
+                    product.margin >= 50 ? 'text-yellow-400' :
+                    'text-red-400'
+                  }>
+                    {product.margin.toFixed(2)}%
+                  </span>
+                </TableCell>
+                <TableCell>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleSourceToggle(product.id)}
-                    className={`h-8 px-3 text-xs font-medium border-0 ${
-                      product.costSource === 'SHOPIFY' 
-                        ? isShopifyCostAvailable(product)
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-500 dark:text-white dark:hover:bg-blue-600' 
-                          : 'bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-500 dark:text-black dark:hover:bg-yellow-600'
-                        : 'bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:text-white dark:hover:bg-orange-600'
-                    }`}
-                    title={
-                      product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
-                        ? 'Shopify cost data not available - consider switching to Manual mode'
-                        : ''
-                    }
+                    onClick={() => handleSave(product.id)}
+                    disabled={!unsavedChanges.has(product.id) || savingProducts.has(product.id)}
+                    className="h-8 px-3 text-xs"
                   >
-                    {product.costSource}
+                    {savingProducts.has(product.id) ? 'Saving...' : 'Save'}
                   </Button>
-                  {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) && (
-                    <span className="text-xs text-yellow-400" title="Shopify cost data not available">
-                      ⚠️
-                    </span>
-                  )}
-                </div>
-              </TableCell>
-              <TableCell>
-                {isFieldEditable(product, 'cost') ? (
-                  <Input
-                    type="text"
-                    value={formatCurrencyForInput(getDisplayedCostOfGoodsSold(product))}
-                    onChange={(e) => handleCostChange(product.id, parseCurrencyInput(e.target.value))}
-                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <div 
-                    className={`w-28 h-8 flex items-center justify-end text-sm px-2 rounded ${
-                      product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
-                        ? 'text-yellow-400 bg-yellow-900/20 border border-yellow-600'
-                        : 'text-gray-400 bg-gray-800'
-                    }`}
-                    title={
-                      product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product)
-                        ? 'No cost data available from Shopify'
-                        : ''
-                    }
-                  >
-                    {product.costSource === 'SHOPIFY' && !isShopifyCostAvailable(product) 
-                      ? 'N/A' 
-                      : formatCurrency(getDisplayedCostOfGoodsSold(product))
-                    }
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>
-                {isFieldEditable(product, 'handling') ? (
-                  <Input
-                    type="text"
-                    value={formatCurrencyForInput(getDisplayedHandlingFees(product))}
-                    onChange={(e) => handleHandlingFeesChange(product.id, parseCurrencyInput(e.target.value))}
-                    className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                    {formatCurrency(getDisplayedHandlingFees(product))}
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>
-                <Input
-                  type="text"
-                  value={formatCurrencyForInput(product.miscFees)}
-                  onChange={(e) => handleMiscFeesChange(product.id, parseCurrencyInput(e.target.value))}
-                  className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                  placeholder="0.00"
-                />
-              </TableCell>
-              <TableCell className="text-left font-medium text-sm">
-                <span className={
-                  product.margin >= 70 ? 'text-green-400' :
-                  product.margin >= 50 ? 'text-yellow-400' :
-                  'text-red-400'
-                }>
-                  {product.margin.toFixed(2)}%
-                </span>
-              </TableCell>
-              <TableCell>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleSave(product.id)}
-                  disabled={!unsavedChanges.has(product.id) || savingProducts.has(product.id)}
-                  className="h-8 px-3 text-xs"
+                </TableCell>
+              </TableRow>
+
+              {/* Variant Rows (shown when expanded) */}
+              {expandedProducts.has(product.id) && product.variants.map((variant, index) => (
+                <TableRow 
+                  key={`${product.id}-variant-${variant.id}`}
+                  className="border-b border-gray-700 bg-gray-850 hover:bg-gray-800/50 transition-colors"
                 >
-                  {savingProducts.has(product.id) ? 'Saving...' : 'Save'}
-                </Button>
-              </TableCell>
-            </TableRow>
+                  <TableCell className="h-10 pl-8">
+                    {/* Empty cell for checkbox column */}
+                  </TableCell>
+                  <TableCell className="pl-8">
+                    <div className="flex items-center gap-3 text-sm">
+                      <div className="w-1 h-4 bg-gray-600 rounded-full"></div>
+                      <div className="flex flex-col">
+                        <span className="text-gray-300 font-medium">
+                          Variant {index + 1}
+                        </span>
+                        {variant.sku && (
+                          <span className="text-xs text-gray-500">SKU: {variant.sku}</span>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Status - inherit from parent */}
+                    —
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Last Edited - inherit from parent */}
+                    —
+                  </TableCell>
+                  <TableCell className="text-right font-medium text-sm">
+                    {formatCurrency(variant.price)}
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Source - inherit from parent */}
+                    —
+                  </TableCell>
+                  <TableCell>
+                    <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                      {formatCurrency(variant.inventory_cost)}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Handling Fees - variants don't have individual handling fees */}
+                    —
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Misc Fees - variants don't have individual misc fees */}
+                    —
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Margin - calculate from variant price and cost */}
+                    {variant.price > 0 ? (
+                      <span className={
+                        ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 70 ? 'text-green-400' :
+                        ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 50 ? 'text-yellow-400' :
+                        'text-red-400'
+                      }>
+                        {(((variant.price - variant.inventory_cost) / variant.price) * 100).toFixed(2)}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-500">
+                    {/* Actions - variants don't have individual save actions */}
+                    —
+                  </TableCell>
+                </TableRow>
+              ))}
+            </React.Fragment>
           ))}
         </TableBody>
       </Table>

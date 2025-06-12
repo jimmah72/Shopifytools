@@ -216,10 +216,8 @@ export default function ProductsPage() {
       const newSet = new Set(prev);
       if (newSet.has(productId)) {
         newSet.delete(productId);
-        console.log('EXPANSION DEBUG - Collapsed product:', productId);
       } else {
         newSet.add(productId);
-        console.log('EXPANSION DEBUG - Expanded product:', productId);
       }
       return newSet;
     });
@@ -231,12 +229,10 @@ export default function ProductsPage() {
 
   const expandAllProducts = useCallback(() => {
     setExpandedProducts(new Set(products.map(p => p.id)));
-    console.log('EXPANSION DEBUG - Expanded all products');
   }, [products]);
 
   const collapseAllProducts = useCallback(() => {
     setExpandedProducts(new Set());
-    console.log('EXPANSION DEBUG - Collapsed all products');
   }, []);
 
   const recalculateMargin = useCallback((product: Product) => {
