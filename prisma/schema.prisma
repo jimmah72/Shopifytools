@@ -53,6 +53,8 @@ model ProductVariant {
   sku         String?
   price       Float
   cost        Float
+  costSource  String?  @default("SHOPIFY")
+  costLastUpdated DateTime?
   weight      Float?
   inventoryQty Int     @default(0)
   createdAt   DateTime @default(now())

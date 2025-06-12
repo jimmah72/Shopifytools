@@ -2,6 +2,37 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getProducts } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
+import { Prisma } from '@prisma/client'
+
+interface ShopifyVariant {
+  id: string
+  price: string
+  inventory_quantity: number
+  cost_per_item: string
+  sku?: string
+}
+
+interface ShopifyProduct {
+  id: string
+  title: string
+  handle: string
+  description: string
+  tags: string[]
+  images: Array<{ src: string; alt?: string }>
+  variants: ShopifyVariant[]
+}
+
+interface DbVariant {
+  id: string
+  cost: number | null
+  costSource: string | null
+  costLastUpdated: Date | null
+}
+
+interface DbProduct {
+  id: string
+  variants: DbVariant[]
+}
 
 interface TransformedProduct {
   id: string
@@ -19,6 +50,32 @@ interface TransformedProduct {
 // Mark route as dynamic
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
+
+type DbQueryResult = Prisma.PromiseReturnType<typeof prisma.product.findMany>
+
+type ProductWithVariants = {
+  id: string;
+  variants: Array<{
+    id: string;
+    cost: number | null;
+    costSource: string | null;
+    costLastUpdated: Date | null;
+  }>;
+};
+
+type PrismaProductSelect = Prisma.ProductGetPayload<{
+  select: {
+    id: true
+    variants: {
+      select: {
+        id: true
+        cost: true
+        costSource: true
+        costLastUpdated: true
+      }
+    }
+  }
+}>
 
 export async function GET(request: NextRequest) {
   console.log('Products API - GET request received')
@@ -49,7 +106,7 @@ export async function GET(request: NextRequest) {
     // Get the first store from the database
     console.log('Products API - Fetching store from database')
     const store = await prisma.store.findFirst({
-      select: { domain: true, accessToken: true }
+      select: { id: true, domain: true, accessToken: true }
     })
 
     console.log('Products API - Store found:', store ? { domain: store.domain } : null)
@@ -81,9 +138,109 @@ export async function GET(request: NextRequest) {
     
     // Fetch products from Shopify
     console.log('Products API - Fetching products from Shopify')
-    const products = await getProducts(formattedDomain, store.accessToken, { limit })
-    console.log('Products API - Successfully fetched products')
+    const shopifyProducts = (await getProducts(formattedDomain, store.accessToken, { 
+      limit,
+      fields: [
+        'id', 
+        'title', 
+        'handle', 
+        'description', 
+        'tags', 
+        'images',
+        'variants',
+        'variants.id',
+        'variants.price',
+        'variants.inventory_quantity',
+        'variants.cost_per_item',
+        'variants.sku'
+      ]
+    })) as ShopifyProduct[]
 
+    console.log('Products API - First Shopify product:', shopifyProducts[0] ? {
+      id: shopifyProducts[0].id,
+      title: shopifyProducts[0].title,
+      variants: shopifyProducts[0].variants.map(v => ({
+        id: v.id,
+        cost_per_item: v.cost_per_item,
+        parsed_cost: parseFloat(v.cost_per_item)
+      }))
+    } : null)
+
+    // Fetch cost data from our database
+    const dbProducts = await prisma.$queryRaw<DbProduct[]>`
+      SELECT p.id,
+             json_agg(
+               json_build_object(
+                 'id', v.id,
+                 'cost', v.cost,
+                 'costSource', v."costSource",
+                 'costLastUpdated', v."costLastUpdated"
+               )
+             ) as variants
+      FROM "Product" p
+      LEFT JOIN "ProductVariant" v ON v."productId" = p.id
+      WHERE p."storeId" = ${store.id}
+      GROUP BY p.id
+    `
+
+    // Merge Shopify data with our cost data
+    const products = shopifyProducts.map((shopifyProduct: ShopifyProduct) => {
+      const dbProduct = dbProducts.find(p => p.id === shopifyProduct.id)
+      return {
+        ...shopifyProduct,
+        variants: shopifyProduct.variants.map((variant: ShopifyVariant) => {
+          const dbVariant = dbProduct?.variants?.find((v: DbVariant) => v.id === variant.id)
+          const shopifyCost = variant.cost_per_item ? parseFloat(variant.cost_per_item) : null
+          
+          console.log(`Processing variant ${variant.id}:`, {
+            dbVariantCost: dbVariant?.cost,
+            rawShopifyCost: variant.cost_per_item,
+            parsedShopifyCost: shopifyCost,
+            dbVariantSource: dbVariant?.costSource
+          })
+          
+          // If we have a dbVariant with a cost and it's not from Shopify, use that
+          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined && dbVariant?.costSource !== 'SHOPIFY') {
+            return {
+              ...variant,
+              cost: dbVariant.cost,
+              costSource: dbVariant.costSource ?? 'MANUAL',
+              costLastUpdated: dbVariant.costLastUpdated ?? new Date()
+            }
+          }
+          
+          // Try to use Shopify's cost if available
+          if (shopifyCost !== null && !isNaN(shopifyCost)) {
+            return {
+              ...variant,
+              cost: shopifyCost,
+              costSource: 'SHOPIFY',
+              costLastUpdated: new Date()
+            }
+          }
+          
+          // If we have any dbVariant cost as a last resort, use that
+          if (dbVariant?.cost !== null && dbVariant?.cost !== undefined) {
+            return {
+              ...variant,
+              cost: dbVariant.cost,
+              costSource: dbVariant.costSource ?? 'MANUAL',
+              costLastUpdated: dbVariant.costLastUpdated ?? new Date()
+            }
+          }
+          
+          // Fallback to 0 cost with MANUAL source if no valid cost found
+          return {
+            ...variant,
+            cost: 0,
+            costSource: 'MANUAL',
+            costLastUpdated: new Date()
+          }
+        })
+      }
+    })
+
+    console.log('Products API - Successfully fetched and merged products')
     return NextResponse.json({ products })
   } catch (error) {
     console.error('Products API - Error:', error)

@@ -10,6 +10,8 @@ interface ProductCardProps {
       price: string;
       price_currency?: string;
       inventory_quantity: number;
+      cost: number;
+      costSource?: 'MANUAL' | 'SHOPIFY';
     }>;
   };
   onClick?: () => void;
@@ -85,12 +87,20 @@ export default function ProductCard({ product, onClick }: ProductCardProps) {
         </Typography>
 
         <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Typography variant="h6" color="primary">
-            {new Intl.NumberFormat('en-US', {
-              style: 'currency',
-              currency: product.variants[0]?.price_currency || 'USD',
-            }).format(parseFloat(product.variants[0]?.price || '0'))}
-          </Typography>
+          <Stack spacing={1}>
+            <Typography variant="h6" color="primary">
+              {new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: product.variants[0]?.price_currency || 'USD',
+              }).format(parseFloat(product.variants[0]?.price || '0'))}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Cost: {new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: product.variants[0]?.price_currency || 'USD',
+              }).format(product.variants[0]?.cost || 0)}
+            </Typography>
+          </Stack>
           
           <Typography 
             variant="body2" 

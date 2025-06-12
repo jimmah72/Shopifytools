@@ -17,6 +17,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Check if theme was previously saved
     const savedTheme = localStorage.getItem('theme') as Theme
+    console.log('Initial theme load:', { savedTheme, systemDark: window.matchMedia('(prefers-color-scheme: dark)').matches })
     if (savedTheme) {
       setTheme(savedTheme)
     } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -26,12 +27,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Update document class when theme changes
+    console.log('Theme changed to:', theme)
+    console.log('Previous classes:', document.documentElement.classList.toString())
     document.documentElement.classList.remove('light', 'dark')
     document.documentElement.classList.add(theme)
+    console.log('Updated classes:', document.documentElement.classList.toString())
     localStorage.setItem('theme', theme)
   }, [theme])
 
   const toggleTheme = () => {
+    console.log('Toggle theme clicked, current theme:', theme)
     setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light')
   }
 

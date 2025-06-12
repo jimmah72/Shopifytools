@@ -24,7 +24,10 @@ function validateEnvironmentVariables() {
   console.log('Shopify API - Environment variables validated successfully')
 }
 
-export async function getProducts(shop: string, accessToken: string, options: { limit?: number } = {}) {
+export async function getProducts(shop: string, accessToken: string, options: { 
+  limit?: number;
+  fields?: string[];
+} = {}) {
   console.log('Shopify API - Getting products for shop:', shop)
   
   try {
@@ -39,6 +42,10 @@ export async function getProducts(shop: string, accessToken: string, options: { 
     
     if (options.limit) {
       url.searchParams.set('limit', options.limit.toString());
+    }
+    
+    if (options.fields) {
+      url.searchParams.set('fields', options.fields.join(','));
     }
 
     console.log('Shopify API - Making request to:', url.toString())
@@ -57,8 +64,50 @@ export async function getProducts(shop: string, accessToken: string, options: { 
     }
 
     const data = await response.json();
+    console.log('Shopify API - Product data sample:', {
+      firstProduct: data.products[0] ? {
+        id: data.products[0].id,
+        title: data.products[0].title,
+        firstVariant: data.products[0].variants[0] ? {
+          id: data.products[0].variants[0].id,
+          cost_per_item: data.products[0].variants[0].cost_per_item
+        } : null
+      } : null
+    });
     console.log('Shopify API - Successfully fetched products')
     return data.products;
+  } catch (error) {
+    console.error('Shopify API - Error:', error)
+    throw error;
+  }
+}
+
+export async function getVariant(shop: string, accessToken: string, variantId: string) {
+  console.log('Shopify API - Getting variant:', variantId)
+  
+  try {
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+    
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/variants/${variantId}.json`);
+    url.searchParams.set('fields', 'id,title,price,inventory_quantity,cost_per_item,sku');
+    
+    console.log('Shopify API - Making request to:', url.toString())
+    const response = await fetch(url.toString(), {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error('Shopify API - Error response:', response.statusText)
+      throw new Error(`Shopify API Error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('Shopify API - Successfully fetched variant')
+    return data.variant;
   } catch (error) {
     console.error('Shopify API - Error:', error)
     throw error;

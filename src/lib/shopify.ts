@@ -89,6 +89,7 @@ export interface ShopifyProduct {
   title: string;
   handle: string;
   description: string;
+  tags: string[];
   images: Array<{
     src: string;
     alt?: string;
@@ -98,6 +99,7 @@ export interface ShopifyProduct {
     price: string;
     inventory_quantity: number;
     cost_per_item: string;
+    sku?: string;
   }>;
 }
 
