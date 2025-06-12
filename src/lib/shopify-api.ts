@@ -277,4 +277,69 @@ export async function getProductsWithInventoryCosts(shop: string, accessToken: s
     console.error('Shopify API - Error:', error)
     throw error;
   }
+}
+
+export async function getOrders(shop: string, accessToken: string, options: {
+  limit?: number;
+  status?: string;
+  created_at_min?: string;
+  created_at_max?: string;
+  since_id?: string;
+  financial_status?: string;
+  fulfillment_status?: string;
+} = {}) {
+  console.log('Shopify API - Getting orders for shop:', shop)
+  
+  try {
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/orders.json`);
+    
+    // Set query parameters
+    if (options.limit) {
+      url.searchParams.set('limit', options.limit.toString());
+    }
+    if (options.status) {
+      url.searchParams.set('status', options.status);
+    }
+    if (options.created_at_min) {
+      url.searchParams.set('created_at_min', options.created_at_min);
+    }
+    if (options.created_at_max) {
+      url.searchParams.set('created_at_max', options.created_at_max);
+    }
+    if (options.since_id) {
+      url.searchParams.set('since_id', options.since_id);
+    }
+    if (options.financial_status) {
+      url.searchParams.set('financial_status', options.financial_status);
+    }
+    if (options.fulfillment_status) {
+      url.searchParams.set('fulfillment_status', options.fulfillment_status);
+    }
+
+    console.log('Shopify API - Making orders request to:', url.toString())
+    const response = await fetch(url.toString(), {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('Shopify API - Orders response status:', response.status)
+
+    if (!response.ok) {
+      console.error('Shopify API - Orders error response:', response.statusText)
+      throw new Error(`Shopify API Error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('Shopify API - Total orders returned:', data.orders.length);
+    console.log('Shopify API - Successfully fetched orders')
+    return data.orders;
+  } catch (error) {
+    console.error('Shopify API - Orders error:', error)
+    throw error;
+  }
 } 
