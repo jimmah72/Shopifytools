@@ -1,7 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
-import { getAllOrders, getAllProducts, getOrdersCount } from '@/lib/shopify-api'
+import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
 interface SyncResult {
@@ -86,18 +86,26 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
     // Instead of fetching ALL orders, first check what we're missing
     const formattedDomain = formatShopDomain(store.domain)
     
+    // Calculate the date filter for the timeframe
+    const timeframeStartDate = new Date(Date.now() - timeframeDays * 24 * 60 * 60 * 1000)
+    
     // Step 1: Get total order count from Shopify (fast API call)
     const totalOrdersInShopify = await getOrdersCount(formattedDomain, store.accessToken, {
-      created_at_min: new Date(Date.now() - timeframeDays * 24 * 60 * 60 * 1000).toISOString(),
+      created_at_min: timeframeStartDate.toISOString(),
       status: 'any'
     })
     
-    // Step 2: Get count of orders we already have locally
+    // Step 2: Get count of orders we already have locally FOR THE SAME TIMEFRAME
     const localOrdersCount = await prisma.shopifyOrder.count({
-      where: { storeId }
+      where: { 
+        storeId,
+        createdAt: {
+          gte: timeframeStartDate
+        }
+      }
     })
     
-    console.log(`Sync Service - Shopify has ${totalOrdersInShopify} orders, we have ${localOrdersCount} locally`)
+    console.log(`Sync Service - Shopify has ${totalOrdersInShopify} orders (${timeframeDays}d), we have ${localOrdersCount} locally (${timeframeDays}d)`)
     
     // If we have all orders, skip the sync
     if (localOrdersCount >= totalOrdersInShopify) {
@@ -114,9 +122,14 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
       return result
     }
     
-    // Step 3: Get existing order IDs to avoid refetching
+    // Step 3: Get existing order IDs to avoid refetching (within timeframe)
     const existingOrderIds = await prisma.shopifyOrder.findMany({
-      where: { storeId },
+      where: { 
+        storeId,
+        createdAt: {
+          gte: timeframeStartDate
+        }
+      },
       select: { id: true }
     })
     const existingOrderIdSet = new Set(existingOrderIds.map(o => o.id))
@@ -159,6 +172,10 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
             latestOrderDate = orderDate
           }
 
+          // Fetch refunds for this order - ALWAYS fetch, regardless of status
+          console.log(`Sync Service - Fetching refunds for order ${order.id} (status: ${order.financial_status})`);
+          const totalRefunds = await getOrderRefunds(formattedDomain, store.accessToken, order.id.toString());
+
           const orderData = {
             id: order.id.toString(),
             storeId,
@@ -170,16 +187,17 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
             closedAt: order.closed_at ? new Date(order.closed_at) : null,
             processedAt: order.processed_at ? new Date(order.processed_at) : null,
             currency: order.currency,
-            totalPrice: parseFloat(order.total_price),
-            subtotalPrice: parseFloat(order.subtotal_price),
-            totalTax: parseFloat(order.total_tax),
-            totalDiscounts: parseFloat(order.total_discounts),
-            totalShipping: order.total_shipping_price_set?.shop_money?.amount ? parseFloat(order.total_shipping_price_set.shop_money.amount) : 0,
-            financialStatus: order.financial_status,
+            totalPrice: parseFloat(order.total_price || '0'),
+            subtotalPrice: parseFloat(order.subtotal_price || '0'),
+            totalTax: parseFloat(order.total_tax || '0'),
+            totalDiscounts: parseFloat(order.total_discounts || '0'),
+            totalShipping: parseFloat(order.total_shipping_price_set?.shop_money?.amount || '0'),
+            totalRefunds: totalRefunds, // Use the fetched refunds data
+            financialStatus: order.financial_status || 'pending',
             fulfillmentStatus: order.fulfillment_status || 'unfulfilled',
-            customerFirstName: order.customer?.first_name,
-            customerLastName: order.customer?.last_name,
-            customerEmail: order.customer?.email,
+            customerFirstName: order.customer?.first_name || null,
+            customerLastName: order.customer?.last_name || null,
+            customerEmail: order.customer?.email || null,
             shippingFirstName: order.shipping_address?.first_name,
             shippingLastName: order.shipping_address?.last_name,
             shippingAddress1: order.shipping_address?.address1,
@@ -194,40 +212,51 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
             lastSyncedAt: new Date()
           }
 
-          // Create new order (we know it doesn't exist)
-          await prisma.shopifyOrder.create({
-            data: orderData
+          await prisma.shopifyOrder.upsert({
+            where: { id: order.id.toString() },
+            update: {
+              ...orderData,
+              // Always update refunds data on upsert to catch any new refunds
+              totalRefunds: totalRefunds,
+              updatedAt: new Date(order.updated_at)
+            },
+            create: orderData,
           })
-          result.newRecords++
 
-          // Handle line items
-          const lineItemsData = order.line_items.map((item: any) => ({
-            id: item.id.toString(),
-            orderId: order.id.toString(),
-            productId: item.product_id?.toString(),
-            variantId: item.variant_id?.toString(),
-            title: item.title,
-            variantTitle: item.variant_title,
-            sku: item.sku,
-            quantity: item.quantity,
-            price: parseFloat(item.price),
-            totalDiscount: parseFloat(item.total_discount),
-            productType: item.product_type,
-            vendor: item.vendor,
-            fulfillableQuantity: item.fulfillable_quantity || 0,
-            fulfillmentService: item.fulfillment_service
-          }))
+          // Process line items
+          if (order.line_items && order.line_items.length > 0) {
+            for (const lineItem of order.line_items) {
+              const lineItemData = {
+                id: lineItem.id.toString(),
+                orderId: order.id.toString(),
+                storeId,
+                productId: lineItem.product_id?.toString() || null,
+                variantId: lineItem.variant_id?.toString() || null,
+                title: lineItem.title,
+                quantity: lineItem.quantity,
+                price: parseFloat(lineItem.price || '0'),
+                totalDiscount: parseFloat(lineItem.total_discount || '0'),
+                sku: lineItem.sku || null,
+              }
 
-          if (lineItemsData.length > 0) {
-            await prisma.shopifyLineItem.createMany({
-              data: lineItemsData
-            })
+              await prisma.shopifyLineItem.upsert({
+                where: { id: lineItem.id.toString() },
+                update: lineItemData,
+                create: lineItemData,
+              })
+            }
           }
 
-          result.recordsProcessed++
+          result.newRecords++
+          
+          // Log progress with refunds info
+          if (totalRefunds > 0) {
+            console.log(`Sync Service - Order ${order.name} synced with $${totalRefunds.toFixed(2)} in refunds`);
+          }
+          
         } catch (error) {
           console.error(`Sync Service - Error processing order ${order.id}:`, error)
-          result.errors.push(`Order ${order.id}: ${error}`)
+          result.errors.push(`Order ${order.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
         }
       }
 

@@ -4,7 +4,11 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SyncProgressIndicator } from '@/components/dashboard/SyncProgressIndicator';
 import { Modal } from '@/components/ui/modal';
-import { FinancialBreakdown, type DashboardMetrics as BreakdownMetrics, type BreakdownType } from '@/components/dashboard/FinancialBreakdown';
+import { 
+  FinancialBreakdown, 
+  BreakdownType as ModalBreakdownType, 
+  DashboardMetrics as ModalMetrics 
+} from '@/components/dashboard/FinancialBreakdown';
 import { 
   TrendingUp, 
   ShoppingCart, 
@@ -21,69 +25,49 @@ import {
   RefreshCcw,
   AlertTriangle,
   Banknote,
-  PiggyBank
+  PiggyBank,
+  Plus,
+  Calendar
 } from 'lucide-react';
+import { StatCard } from '@/components/dashboard/StatCard';
 
-const StatCard = ({ 
-  title, 
-  value, 
-  icon: Icon, 
-  loading,
-  variant = 'default',
-  onClick,
-  clickable = false
-}: { 
-  title: string; 
-  value: string; 
-  icon: any; 
-  loading?: boolean;
-  variant?: 'default' | 'income' | 'expense';
-  onClick?: () => void;
-  clickable?: boolean;
-}) => {
-  const getCardClasses = () => {
-    const hoverClasses = clickable ? "cursor-pointer hover:scale-105 hover:shadow-lg transition-all" : "";
-    switch (variant) {
-      case 'income':
-        return `bg-green-900/20 border border-green-700/50 rounded-lg p-6 ${hoverClasses}`;
-      case 'expense':
-        return `bg-red-900/20 border border-red-700/50 rounded-lg p-6 ${hoverClasses}`;
-      default:
-        return `bg-gray-800 border border-gray-700 rounded-lg p-6 ${hoverClasses}`;
-    }
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(amount);
+};
+
+const getTimeframeLabel = (timeframe: string): string => {
+  const now = new Date();
+  let daysBack = 30;
+  
+  switch (timeframe) {
+    case '7d': daysBack = 7; break;
+    case '30d': daysBack = 30; break;
+    case '90d': daysBack = 90; break;
+    case '1y': daysBack = 365; break;
+  }
+  
+  const startDate = new Date();
+  startDate.setDate(now.getDate() - daysBack);
+  
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    });
   };
-
-  const getIconClasses = () => {
-    switch (variant) {
-      case 'income':
-        return "h-4 w-4 text-green-400";
-      case 'expense':
-        return "h-4 w-4 text-red-400";
-      default:
-        return "h-4 w-4 text-blue-400";
-    }
+  
+  const baseLabelMap: Record<string, string> = {
+    '7d': 'Last 7 days',
+    '30d': 'Last 30 days',
+    '90d': 'Last 90 days',
+    '1y': 'Last year'
   };
-
-  return (
-    <div className={getCardClasses()} onClick={clickable ? onClick : undefined}>
-      <div className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <div className="text-sm font-medium text-gray-400">{title}</div>
-        <Icon className={getIconClasses()} />
-      </div>
-      <div>
-        {loading ? (
-          <div className="h-8 bg-gray-700 animate-pulse rounded"></div>
-        ) : (
-          <div className="text-2xl font-bold text-gray-100">{value}</div>
-        )}
-      </div>
-      {clickable && !loading && (
-        <div className="text-xs text-gray-500 mt-1">
-          Click for breakdown
-        </div>
-      )}
-    </div>
-  );
+  
+  return `${baseLabelMap[timeframe]} (${formatDate(startDate)} - ${formatDate(now)})`;
 };
 
 interface DashboardMetrics {
@@ -95,23 +79,22 @@ interface DashboardMetrics {
   averageOrderValue: number;
   totalShippingRevenue: number;
   totalTaxes: number;
-  // New fields for future implementation
   adSpend: number;
-  roas: number; // Return on Ad Spend
-  poas: number; // Profit on Ad Spend  
-  cog: number; // Cost of Goods
+  roas: number;
+  poas: number;
+  cog: number;
   fees: number;
   overheadCosts: number;
   shippingCosts: number;
   miscCosts: number;
-  // Financial impact fields
+  additionalCosts: number;  // NEW
+  subscriptionCosts: number;  // NEW
   totalRefunds: number;
   chargebacks: number;
   paymentGatewayFees: number;
   processingFees: number;
-  netRevenue: number; // Revenue minus refunds and fees
-  dataSource: string;
-  lastSyncTime?: string;
+  netRevenue: number;
+  totalDiscounts: number;
   recentOrders: Array<{
     id: string;
     orderNumber: string;
@@ -121,21 +104,9 @@ interface DashboardMetrics {
       fullName: string;
     };
   }>;
+  dataSource: string;
+  lastSyncTime?: string;
 }
-
-const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-};
-
-const timeframeLabels: Record<string, string> = {
-  '7d': 'Last 7 days',
-  '30d': 'Last 30 days', 
-  '90d': 'Last 90 days',
-  '1y': 'Last year'
-};
 
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -152,9 +123,9 @@ export default function DashboardPage() {
   
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalBreakdownType, setModalBreakdownType] = useState<BreakdownType | null>(null);
+  const [modalBreakdownType, setModalBreakdownType] = useState<ModalBreakdownType | null>(null);
 
-  const openModal = (breakdownType: BreakdownType) => {
+  const openModal = (breakdownType: ModalBreakdownType) => {
     setModalBreakdownType(breakdownType);
     setIsModalOpen(true);
   };
@@ -164,7 +135,7 @@ export default function DashboardPage() {
     setModalBreakdownType(null);
   };
 
-  const getModalTitle = (type: BreakdownType | null): string => {
+  const getModalTitle = (type: ModalBreakdownType | null): string => {
     if (!type) return '';
     switch (type) {
       case 'netRevenue': return 'Net Revenue Breakdown';
@@ -174,6 +145,9 @@ export default function DashboardPage() {
       case 'totalRefunds': return 'Total Refunds Breakdown';
       case 'averageOrderValue': return 'Average Order Value Calculation';
       case 'totalItems': return 'Total Items & Average Per Order';
+      case 'totalDiscounts': return 'Total Discounts Breakdown';
+      case 'additionalCosts': return 'Additional Costs Breakdown';  // NEW
+      case 'subscriptionCosts': return 'Subscription Costs Breakdown';  // NEW
       default: return 'Financial Breakdown';
     }
   };
@@ -235,7 +209,7 @@ export default function DashboardPage() {
     return (
       <div className="p-6 bg-gray-900 min-h-screen">
         <h1 className="text-3xl font-bold text-gray-100 mb-6">
-          Dashboard Overview ({timeframeLabels[timeframe]})
+          Dashboard Overview ({getTimeframeLabel(timeframe)})
         </h1>
         <div className="bg-red-900/20 border border-red-600 rounded-lg p-4 mb-6">
           <p className="text-red-400">{error}</p>
@@ -254,7 +228,7 @@ export default function DashboardPage() {
   return (
     <div className="p-6 bg-gray-900 min-h-screen">
       <h1 className="text-3xl font-bold text-gray-100 mb-6">
-        Dashboard Overview ({timeframeLabels[timeframe]})
+        Dashboard Overview ({getTimeframeLabel(timeframe)})
       </h1>
 
       {/* Sync Progress Indicator */}
@@ -337,6 +311,29 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Discounts & Adjustments */}
+      <div className="mb-4">
+        <h2 className="text-xl font-semibold text-gray-200 mb-4">Discounts & Promotions</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <StatCard
+            title="Total Discounts"
+            value={metrics ? formatCurrency(metrics.totalDiscounts || 0) : '$0'}
+            icon={Receipt}
+            loading={loading}
+            variant="neutral"
+            clickable={true}
+            onClick={() => openModal('totalDiscounts')}
+          />
+          <StatCard
+            title="Discount Rate"
+            value={metrics ? `${metrics.totalRevenue > 0 ? ((metrics.totalDiscounts || 0) / metrics.totalRevenue * 100).toFixed(2) : '0'}%` : '0%'}
+            icon={TrendingDown}
+            loading={loading}
+            variant="neutral"
+          />
+        </div>
+      </div>
+
       {/* Marketing & Performance Metrics */}
       <div className="mb-4">
         <h2 className="text-xl font-semibold text-gray-200 mb-4">Marketing & Performance</h2>
@@ -386,23 +383,27 @@ export default function DashboardPage() {
             variant="expense"
           />
           <StatCard
-            title="Overhead Costs"
-            value={metrics ? formatCurrency(metrics.overheadCosts || 0) : '$0'}
-            icon={Building}
+            title="Additional Costs"
+            value={metrics ? formatCurrency(metrics.additionalCosts || 0) : '$0'}
+            icon={Plus}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('additionalCosts')}
+          />
+          <StatCard
+            title="Subscription Costs"
+            value={metrics ? formatCurrency(metrics.subscriptionCosts || 0) : '$0'}
+            icon={Calendar}
+            loading={loading}
+            variant="expense"
+            clickable={true}
+            onClick={() => openModal('subscriptionCosts')}
           />
           <StatCard
             title="Shipping Costs"
             value={metrics ? formatCurrency(metrics.shippingCosts || 0) : '$0'}
             icon={Truck}
-            loading={loading}
-            variant="expense"
-          />
-          <StatCard
-            title="Misc Costs"
-            value={metrics ? formatCurrency(metrics.miscCosts || 0) : '$0'}
-            icon={Calculator}
             loading={loading}
             variant="expense"
           />
@@ -474,7 +475,7 @@ export default function DashboardPage() {
         {modalBreakdownType && metrics && (
           <FinancialBreakdown
             type={modalBreakdownType}
-            metrics={metrics as BreakdownMetrics}
+            metrics={metrics as ModalMetrics}
           />
         )}
       </Modal>

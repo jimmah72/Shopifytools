@@ -1376,4 +1376,79 @@ export async function getOrdersCount(shop: string, accessToken: string, options:
     console.error('Shopify API - Orders count error:', error)
     throw error;
   }
+}
+
+export async function getOrderRefunds(shop: string, accessToken: string, orderId: string) {
+  console.log(`Shopify API - Getting refunds for order: ${orderId}`)
+  
+  try {
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+
+    const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/orders/${orderId}/refunds.json`;
+    
+    console.log('Shopify API - Making refunds request to:', url)
+    
+    const response = await retryWithBackoff(async () => {
+      const res = await fetch(url, {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        console.error(`Shopify API - Refunds error response for order ${orderId}:`, res.statusText)
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      return res;
+    });
+
+    const data = await response.json();
+    
+    let totalRefunds = 0;
+    
+    if (data.refunds && data.refunds.length > 0) {
+      console.log(`Shopify API - Found ${data.refunds.length} refund records for order ${orderId}`);
+      
+      data.refunds.forEach((refund: any, refundIndex: number) => {
+        console.log(`Shopify API - Processing refund ${refundIndex + 1}`);
+        
+        // 1. Add transaction refunds (covers gross returns - product refunds)
+        if (refund.transactions && refund.transactions.length > 0) {
+          refund.transactions.forEach((transaction: any) => {
+            if (transaction.kind === 'refund' || transaction.kind === 'void') {
+              const amount = parseFloat(transaction.amount || '0');
+              totalRefunds += amount;
+              console.log(`Shopify API - Added transaction refund: $${amount} (${transaction.kind})`);
+            }
+          });
+        }
+        
+        // 2. Add order adjustments ONLY for taxes and return fees (not shipping to avoid double-counting)
+        // Shipping refunds are typically included in transaction amounts, not separate
+        if (refund.order_adjustments && refund.order_adjustments.length > 0) {
+          refund.order_adjustments.forEach((adjustment: any) => {
+            const amount = parseFloat(adjustment.amount || '0');
+            // Only add tax adjustments and return fees - these are truly additional
+            if (adjustment.kind === 'tax_adjustment' || adjustment.kind === 'return_fee') {
+              totalRefunds += Math.abs(amount); // Use absolute value to handle negative amounts
+              console.log(`Shopify API - Added order adjustment (${adjustment.kind}): $${Math.abs(amount)}`);
+            }
+            // Skip shipping_refund and refund.shipping.amount as they typically duplicate transaction amounts
+          });
+        }
+      });
+    } else {
+      console.log(`Shopify API - No refunds found for order ${orderId}`);
+    }
+    
+    console.log(`Shopify API - Total refunds for order ${orderId}: $${totalRefunds.toFixed(2)}`);
+    return totalRefunds;
+    
+  } catch (error) {
+    console.error(`Shopify API - Error fetching refunds for order ${orderId}:`, error);
+    return 0; // Return 0 if refunds cannot be fetched
+  }
 } 

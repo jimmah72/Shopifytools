@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-// Enable caching for 5 minutes
-export const revalidate = 300;
+// Disable caching for testing refunds data
+// export const revalidate = 300;
 
 interface DashboardMetrics {
   totalSales: number;
@@ -22,11 +22,14 @@ interface DashboardMetrics {
   overheadCosts: number;
   shippingCosts: number;
   miscCosts: number;
+  additionalCosts: number;  // NEW: Dynamic additional costs
+  subscriptionCosts: number;  // NEW: Daily subscription costs
   totalRefunds: number;
   chargebacks: number;
   paymentGatewayFees: number;
   processingFees: number;
   netRevenue: number;
+  totalDiscounts: number;
   recentOrders: Array<{
     id: string;
     orderNumber: string;
@@ -64,20 +67,25 @@ export async function GET(request: NextRequest) {
     // Calculate date range based on timeframe
     const endDate = new Date()
     const startDate = new Date()
+    let timeframeDays = 30; // Default for calculations
     
     switch (timeframe) {
       case '7d':
         startDate.setDate(endDate.getDate() - 7)
+        timeframeDays = 7;
         break
       case '90d':
         startDate.setDate(endDate.getDate() - 90)
+        timeframeDays = 90;
         break
       case '1y':
         startDate.setFullYear(endDate.getFullYear() - 1)
+        timeframeDays = 365;
         break
       case '30d':
       default:
         startDate.setDate(endDate.getDate() - 30)
+        timeframeDays = 30;
         break
     }
 
@@ -90,6 +98,47 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Get fee configuration for this store
+    let feeConfig = await (prisma as any).feeConfiguration.findUnique({
+      where: { storeId: store.id }
+    })
+
+    // Create default fee configuration if none exists
+    if (!feeConfig) {
+      feeConfig = await (prisma as any).feeConfiguration.create({
+        data: {
+          storeId: store.id,
+          paymentGatewayRate: 0.029,
+          processingFeePerOrder: 0.30,
+          defaultCogRate: 0.40,
+          overheadCostRate: 0.00,
+          overheadCostPerOrder: 0.00,
+          overheadCostPerItem: 0.00,
+          miscCostRate: 0.00,
+          miscCostPerOrder: 0.00,
+          miscCostPerItem: 0.00,
+          chargebackRate: 0.001,
+          returnRate: 0.05,
+        }
+      })
+    }
+
+    // Get active additional costs and subscription fees
+    const [additionalCostsData, subscriptionFeesData] = await Promise.all([
+      (prisma as any).additionalCost.findMany({
+        where: { 
+          storeId: store.id,
+          isActive: true 
+        }
+      }),
+      (prisma as any).subscriptionFee.findMany({
+        where: { 
+          storeId: store.id,
+          isActive: true 
+        }
+      })
+    ]);
+
     // Get metrics from local database (MUCH faster!)
     const [orderMetrics, productCount, totalItemsData, recentOrdersData, syncStatus] = await Promise.all([
       // Calculate order metrics from local data with date filtering
@@ -100,7 +149,8 @@ export async function GET(request: NextRequest) {
           totalPrice: true,
           totalShipping: true,
           totalTax: true,
-          totalDiscounts: true
+          totalDiscounts: true,
+          totalRefunds: true  // NEW: Get actual refunds
         }
       }),
       
@@ -151,28 +201,73 @@ export async function GET(request: NextRequest) {
     const totalRevenue = orderMetrics._sum.totalPrice || 0
     const totalShippingRevenue = orderMetrics._sum.totalShipping || 0
     const totalTaxes = orderMetrics._sum.totalTax || 0
-    const totalDiscounts = orderMetrics._sum.totalDiscounts || 0
+    const totalDiscounts = orderMetrics._sum.totalDiscounts || 0  // Keep as separate metric
+    const totalRefunds = orderMetrics._sum.totalRefunds || 0      // NEW: Actual refunds
     const totalItems = totalItemsData._sum.quantity || 0
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
 
-    // Calculate financial metrics
-    // For now, using placeholders for data not yet available from Shopify
+    // Calculate financial metrics using configured rates
     const adSpend = 0 // TODO: Integrate with ad platforms
-    const totalRefunds = totalDiscounts // Using discounts as proxy for refunds for now
-    const estimatedCOG = totalRevenue * 0.4 // Estimate 40% of revenue as COG
-    const estimatedGatewayFees = totalRevenue * 0.029 // ~2.9% standard rate
-    const estimatedProcessingFees = totalOrders * 0.30 // ~$0.30 per transaction
+    const estimatedCOG = totalRevenue * feeConfig.defaultCogRate
+    const estimatedGatewayFees = totalRevenue * feeConfig.paymentGatewayRate
+    const estimatedProcessingFees = totalOrders * feeConfig.processingFeePerOrder
+    
+    // DEPRECATED: Old overhead/misc costs (still keep for backward compatibility but set to 0)
+    const overheadCosts = 0;
+    const miscCosts = 0;
+    
+    // NEW: Calculate dynamic additional costs
+    let additionalCosts = 0;
+    for (const cost of additionalCostsData) {
+      // Percentage-based costs
+      additionalCosts += totalRevenue * (cost.percentagePerOrder / 100);
+      additionalCosts += totalItems * totalRevenue * (cost.percentagePerItem / 100);
+      
+      // Flat rate costs
+      additionalCosts += totalOrders * cost.flatRatePerOrder;
+      additionalCosts += totalItems * cost.flatRatePerItem;
+    }
+    
+    // NEW: Calculate subscription costs for timeframe
+    const subscriptionCosts = subscriptionFeesData.reduce((total: number, fee: any) => {
+      return total + (fee.dailyRate * timeframeDays);
+    }, 0);
+    
+    const estimatedChargebacks = totalRevenue * feeConfig.chargebackRate
     const netRevenue = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees
 
     // Log detailed net revenue calculations
-    console.log('=== NET REVENUE CALCULATION ===')
+    console.log('=== NET REVENUE CALCULATION (Using Configured Rates + Dynamic Costs) ===')
     console.log(`📊 Total Revenue: $${totalRevenue.toFixed(2)}`)
     console.log(`📊 Total Orders: ${totalOrders}`)
+    console.log(`📊 Total Items: ${totalItems}`)
+    console.log(`📊 Timeframe: ${timeframeDays} days`)
+    console.log(`📊 Total Discounts (coupons/promos): $${totalDiscounts.toFixed(2)}`)
+    console.log(``)
+    console.log(`⚙️  CONFIGURED RATES:`)
+    console.log(`   💳 Gateway Rate: ${(feeConfig.paymentGatewayRate * 100).toFixed(2)}%`)
+    console.log(`   💰 Processing Fee: $${feeConfig.processingFeePerOrder}`)
+    console.log(`   📦 COG Rate: ${(feeConfig.defaultCogRate * 100).toFixed(1)}%`)
+    console.log(``)
+    console.log(`🔧 DYNAMIC COSTS:`)
+    console.log(`   📊 Additional Costs (${additionalCostsData.length} active): $${additionalCosts.toFixed(2)}`)
+    additionalCostsData.forEach((cost: any) => {
+      const costTotal = (totalRevenue * cost.percentagePerOrder / 100) + 
+                       (totalItems * totalRevenue * cost.percentagePerItem / 100) +
+                       (totalOrders * cost.flatRatePerOrder) + 
+                       (totalItems * cost.flatRatePerItem);
+      console.log(`     - ${cost.name}: $${costTotal.toFixed(2)}`)
+    });
+    console.log(`   💼 Subscription Costs (${subscriptionFeesData.length} active): $${subscriptionCosts.toFixed(2)}`)
+    subscriptionFeesData.forEach((fee: any) => {
+      const feeCost = fee.dailyRate * timeframeDays;
+      console.log(`     - ${fee.name}: $${feeCost.toFixed(2)} (${fee.billingType}: $${fee.dailyRate.toFixed(2)}/day × ${timeframeDays} days)`)
+    });
     console.log(``)
     console.log(`🔻 DEDUCTIONS:`)
-    console.log(`   💸 Total Refunds (discounts): $${totalRefunds.toFixed(2)}`)
-    console.log(`   💳 Gateway Fees (2.9% of revenue): $${estimatedGatewayFees.toFixed(2)} (${totalRevenue.toFixed(2)} × 0.029)`)
-    console.log(`   💰 Processing Fees ($0.30 per order): $${estimatedProcessingFees.toFixed(2)} (${totalOrders} × $0.30)`)
+    console.log(`   💸 Total Refunds (actual): $${totalRefunds.toFixed(2)}`)
+    console.log(`   💳 Gateway Fees (${(feeConfig.paymentGatewayRate * 100).toFixed(2)}%): $${estimatedGatewayFees.toFixed(2)}`)
+    console.log(`   💰 Processing Fees ($${feeConfig.processingFeePerOrder} × ${totalOrders}): $${estimatedProcessingFees.toFixed(2)}`)
     console.log(``)
     console.log(`🧮 CALCULATION:`)
     console.log(`   Net Revenue = $${totalRevenue.toFixed(2)} - $${totalRefunds.toFixed(2)} - $${estimatedGatewayFees.toFixed(2)} - $${estimatedProcessingFees.toFixed(2)}`)
@@ -182,7 +277,11 @@ export async function GET(request: NextRequest) {
     console.log(`   💚 Net Revenue: $${netRevenue.toFixed(2)}`)
     console.log(`   📉 Total Fees & Refunds: $${(totalRefunds + estimatedGatewayFees + estimatedProcessingFees).toFixed(2)}`)
     console.log(`   📊 Net Margin: ${((netRevenue / totalRevenue) * 100).toFixed(2)}%`)
-    console.log('=================================')
+    console.log(`   📦 Estimated COG: $${estimatedCOG.toFixed(2)} (${(feeConfig.defaultCogRate * 100).toFixed(1)}%)`)
+    console.log(`   🏗️  Additional Costs: $${additionalCosts.toFixed(2)}`)
+    console.log(`   💼 Subscription Costs: $${subscriptionCosts.toFixed(2)}`)
+    console.log(`   🎟️  Total Discounts (not deducted): $${totalDiscounts.toFixed(2)}`)
+    console.log('========================================================')
 
     // Calculate ROAS and POAS (require ad spend data)
     const roas = adSpend > 0 ? totalRevenue / adSpend : 0
@@ -214,51 +313,36 @@ export async function GET(request: NextRequest) {
       poas,
       cog: estimatedCOG,
       fees: estimatedGatewayFees + estimatedProcessingFees,
-      overheadCosts: 0, // TODO: Add overhead cost tracking
-      shippingCosts: 0, // TODO: Calculate actual shipping costs vs revenue
-      miscCosts: 0, // TODO: Add misc cost tracking
-      totalRefunds,
-      chargebacks: 0, // TODO: Integrate with payment gateway APIs
+      overheadCosts, // DEPRECATED - now always 0
+      shippingCosts: 0, // REMOVED - will be handled by shipping API integration
+      miscCosts, // DEPRECATED - now always 0
+      additionalCosts, // NEW: Dynamic additional costs
+      subscriptionCosts, // NEW: Daily subscription costs for timeframe
+      totalRefunds,  // NOW USING ACTUAL REFUNDS
+      chargebacks: estimatedChargebacks, // NOW USING CONFIGURED RATE
       paymentGatewayFees: estimatedGatewayFees,
       processingFees: estimatedProcessingFees,
       netRevenue,
+      totalDiscounts,  // NEW: Include discounts in response
       recentOrders,
       dataSource: 'local_database',
       lastSyncTime: syncStatus?.lastSyncAt?.toISOString()
     }
 
     console.log('Dashboard API - Local metrics calculated:', {
-      totalOrders: metrics.totalOrders,
-      totalRevenue: metrics.totalRevenue,
-      totalProducts: metrics.totalProducts,
-      averageOrderValue: metrics.averageOrderValue,
-      dataSource: metrics.dataSource,
-      lastSyncTime: metrics.lastSyncTime
+      totalOrders,
+      totalRevenue,
+      totalProducts: productCount,
+      averageOrderValue,
+      dataSource: 'local_database',
+      lastSyncTime: syncStatus?.lastSyncAt?.toISOString()
     })
 
     return NextResponse.json(metrics)
-
   } catch (error) {
     console.error('Dashboard API - Error:', error)
-    
-    // Fallback: suggest running a sync if no local data
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    if (errorMessage.includes('relation') || errorMessage.includes('does not exist')) {
-      return NextResponse.json(
-        { 
-          error: 'Local data not available. Please run an initial sync.',
-          suggestion: 'POST to /api/sync to populate local data',
-          details: errorMessage
-        },
-        { status: 503 }
-      )
-    }
-    
     return NextResponse.json(
-      { 
-        error: 'Failed to fetch dashboard data',
-        details: errorMessage
-      },
+      { error: 'Failed to fetch dashboard metrics' },
       { status: 500 }
     )
   }
