@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SyncProgressIndicator } from '@/components/dashboard/SyncProgressIndicator';
+import { Modal } from '@/components/ui/modal';
+import { FinancialBreakdown, type DashboardMetrics as BreakdownMetrics, type BreakdownType } from '@/components/dashboard/FinancialBreakdown';
 import { 
   TrendingUp, 
   ShoppingCart, 
@@ -27,22 +29,27 @@ const StatCard = ({
   value, 
   icon: Icon, 
   loading,
-  variant = 'default'
+  variant = 'default',
+  onClick,
+  clickable = false
 }: { 
   title: string; 
   value: string; 
   icon: any; 
   loading?: boolean;
   variant?: 'default' | 'income' | 'expense';
+  onClick?: () => void;
+  clickable?: boolean;
 }) => {
   const getCardClasses = () => {
+    const hoverClasses = clickable ? "cursor-pointer hover:scale-105 hover:shadow-lg transition-all" : "";
     switch (variant) {
       case 'income':
-        return "bg-green-900/20 border border-green-700/50 rounded-lg p-6";
+        return `bg-green-900/20 border border-green-700/50 rounded-lg p-6 ${hoverClasses}`;
       case 'expense':
-        return "bg-red-900/20 border border-red-700/50 rounded-lg p-6";
+        return `bg-red-900/20 border border-red-700/50 rounded-lg p-6 ${hoverClasses}`;
       default:
-        return "bg-gray-800 border border-gray-700 rounded-lg p-6";
+        return `bg-gray-800 border border-gray-700 rounded-lg p-6 ${hoverClasses}`;
     }
   };
 
@@ -58,7 +65,7 @@ const StatCard = ({
   };
 
   return (
-    <div className={getCardClasses()}>
+    <div className={getCardClasses()} onClick={clickable ? onClick : undefined}>
       <div className="flex flex-row items-center justify-between space-y-0 pb-2">
         <div className="text-sm font-medium text-gray-400">{title}</div>
         <Icon className={getIconClasses()} />
@@ -70,6 +77,11 @@ const StatCard = ({
           <div className="text-2xl font-bold text-gray-100">{value}</div>
         )}
       </div>
+      {clickable && !loading && (
+        <div className="text-xs text-gray-500 mt-1">
+          Click for breakdown
+        </div>
+      )}
     </div>
   );
 };
@@ -137,6 +149,34 @@ export default function DashboardPage() {
     return '30d';
   });
   const [lastAutoRefresh, setLastAutoRefresh] = useState<Date | null>(null);
+  
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalBreakdownType, setModalBreakdownType] = useState<BreakdownType | null>(null);
+
+  const openModal = (breakdownType: BreakdownType) => {
+    setModalBreakdownType(breakdownType);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setModalBreakdownType(null);
+  };
+
+  const getModalTitle = (type: BreakdownType | null): string => {
+    if (!type) return '';
+    switch (type) {
+      case 'netRevenue': return 'Net Revenue Breakdown';
+      case 'paymentGatewayFees': return 'Payment Gateway Fees';
+      case 'processingFees': return 'Processing Fees Breakdown';
+      case 'cog': return 'Cost of Goods Breakdown';
+      case 'totalRefunds': return 'Total Refunds Breakdown';
+      case 'averageOrderValue': return 'Average Order Value Calculation';
+      case 'totalItems': return 'Total Items & Average Per Order';
+      default: return 'Financial Breakdown';
+    }
+  };
 
   const fetchDashboardData = async (selectedTimeframe = timeframe) => {
     try {
@@ -261,6 +301,8 @@ export default function DashboardPage() {
           value={metrics ? `${metrics.totalOrders.toLocaleString()} / ${metrics.totalItems.toLocaleString()} / ${metrics.totalOrders > 0 ? (metrics.totalItems / metrics.totalOrders).toFixed(1) : '0'}` : '0 / 0 / 0'}
           icon={ShoppingCart}
           loading={loading}
+          clickable={true}
+          onClick={() => openModal('totalItems')}
         />
         <StatCard
           title="Total Products"
@@ -273,6 +315,8 @@ export default function DashboardPage() {
           value={metrics ? formatCurrency(metrics.averageOrderValue) : '$0'}
           icon={TrendingUp}
           loading={loading}
+          clickable={true}
+          onClick={() => openModal('averageOrderValue')}
         />
       </div>
 
@@ -324,6 +368,8 @@ export default function DashboardPage() {
             icon={PackageX}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('cog')}
           />
         </div>
       </div>
@@ -373,6 +419,8 @@ export default function DashboardPage() {
             icon={RefreshCcw}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('totalRefunds')}
           />
           <StatCard
             title="Chargebacks"
@@ -387,6 +435,8 @@ export default function DashboardPage() {
             icon={CreditCard}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('paymentGatewayFees')}
           />
           <StatCard
             title="Processing Fees"
@@ -394,6 +444,8 @@ export default function DashboardPage() {
             icon={Banknote}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('processingFees')}
           />
           <StatCard
             title="Net Revenue"
@@ -401,6 +453,8 @@ export default function DashboardPage() {
             icon={PiggyBank}
             loading={loading}
             variant="income"
+            clickable={true}
+            onClick={() => openModal('netRevenue')}
           />
         </div>
       </div>
@@ -410,6 +464,20 @@ export default function DashboardPage() {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
         </div>
       )}
+
+      {/* Financial Breakdown Modal */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        title={getModalTitle(modalBreakdownType)}
+      >
+        {modalBreakdownType && metrics && (
+          <FinancialBreakdown
+            type={modalBreakdownType}
+            metrics={metrics as BreakdownMetrics}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
