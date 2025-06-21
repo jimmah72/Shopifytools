@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json({
       stuckSyncs: stuckSyncs.length,
-      syncs: stuckSyncs.map(sync => ({
+      syncs: stuckSyncs.map((sync: any) => ({
         storeId: sync.storeId,
         dataType: sync.dataType,
         lastSyncAt: sync.lastSyncAt,
@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
 async function findStuckSyncs() {
   const timeoutThreshold = new Date(Date.now() - SYNC_TIMEOUT_MINUTES * 60 * 1000)
   
-  return await prisma.syncStatus.findMany({
+  return await (prisma as any).syncStatus.findMany({
     where: {
       syncInProgress: true,
       OR: [
@@ -87,16 +87,16 @@ async function cleanupStuckSyncs() {
   }
   
   console.log(`🚨 Found ${stuckSyncs.length} stuck sync(s):`)
-  stuckSyncs.forEach(sync => {
+  stuckSyncs.forEach((sync: any) => {
     const minutesStuck = Math.floor((Date.now() - (sync.lastHeartbeat?.getTime() || sync.lastSyncAt.getTime())) / (1000 * 60))
     console.log(`   - ${sync.dataType} for store ${sync.storeId}: stuck for ${minutesStuck} minutes`)
   })
   
   // Reset all stuck syncs
-  const resetResult = await prisma.syncStatus.updateMany({
+  const resetResult = await (prisma as any).syncStatus.updateMany({
     where: {
       id: {
-        in: stuckSyncs.map(sync => sync.id)
+        in: stuckSyncs.map((sync: any) => sync.id)
       }
     },
     data: {
@@ -112,7 +112,7 @@ async function cleanupStuckSyncs() {
     success: true,
     message: `Successfully reset ${resetResult.count} stuck sync(s)`,
     cleanedUp: resetResult.count,
-    details: stuckSyncs.map(sync => ({
+    details: stuckSyncs.map((sync: any) => ({
       storeId: sync.storeId,
       dataType: sync.dataType,
       minutesStuck: Math.floor((Date.now() - (sync.lastHeartbeat?.getTime() || sync.lastSyncAt.getTime())) / (1000 * 60))
@@ -120,5 +120,5 @@ async function cleanupStuckSyncs() {
   }
 }
 
-// Export the cleanup function for use by other modules
-export { cleanupStuckSyncs } 
+// Note: cleanupStuckSyncs function is used internally by the POST handler above
+// This file exports only HTTP method handlers (GET, POST) as required by Next.js App Router 
