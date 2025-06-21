@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cleanupStuckSyncs } from '../cleanup/route'
+import { cleanupStuckSyncs } from '@/lib/sync-cleanup'
 
 // This endpoint can be called by external cron services (Vercel Cron, GitHub Actions, etc.)
 // to automatically detect and recover stuck syncs
