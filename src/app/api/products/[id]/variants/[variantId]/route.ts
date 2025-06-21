@@ -86,24 +86,16 @@ export async function PATCH(
     const { id: productId, variantId } = params
     const data: VariantCostUpdate = await request.json()
 
-    console.log('=== VARIANT PATCH DEBUG ===')
-    console.log('productId:', productId)
-    console.log('variantId:', variantId)
-    console.log('data:', data)
-
     const store = await prisma.store.findFirst()
     if (!store) {
-      console.log('ERROR: No store found')
+      console.error('Variant PATCH: No store found')
       return NextResponse.json(
         { error: 'No store found' },
         { status: 404 }
       )
     }
 
-    console.log('Store found:', store.id)
-
     // First find the product and its variant
-    console.log('Looking for product with shopifyId:', productId, 'and storeId:', store.id)
     
     const product = await prisma.product.findFirst({
       where: {
@@ -119,33 +111,8 @@ export async function PATCH(
       }
     })
 
-    console.log('Product found:', product ? 'YES' : 'NO')
-    if (product) {
-      console.log('Product ID:', product.id)
-      console.log('Product shopifyId:', product.shopifyId)
-      console.log('Product variants count:', product.variants.length)
-      console.log('Variants:', product.variants.map(v => ({ id: v.id, sku: v.sku })))
-    }
-
-    // Also check if there are ANY variants for this product
-    const allVariants = await prisma.productVariant.findMany({
-      where: {
-        product: {
-          shopifyId: productId,
-          storeId: store.id
-        }
-      },
-      select: {
-        id: true,
-        sku: true,
-        productId: true
-      }
-    })
-    
-    console.log('All variants for this product:', allVariants)
-
     if (!product) {
-      console.log('ERROR: Product not found')
+      console.error(`Variant PATCH: Product not found - shopifyId: ${productId}`)
       return NextResponse.json(
         { error: 'Product not found' },
         { status: 404 }
@@ -155,17 +122,9 @@ export async function PATCH(
     // If variant doesn't exist in database, create it
     let variant = product.variants[0]
     if (!variant) {
-      console.log('Variant not found in database, creating new variant record')
-      
       // Fetch variant details from Shopify to get basic info
       try {
         const shopifyVariant = await getVariant(store.domain, store.accessToken, variantId)
-        console.log('Shopify variant data:', {
-          id: shopifyVariant.id,
-          sku: shopifyVariant.sku,
-          price: shopifyVariant.price,
-          title: shopifyVariant.title
-        })
         
         // Create the variant in database
         variant = await prisma.productVariant.create({
@@ -181,9 +140,9 @@ export async function PATCH(
           }
         })
         
-        console.log('Created new variant:', variant.id)
+        console.log(`Variant PATCH: Created new variant ${variant.id} for product ${productId}`)
       } catch (error) {
-        console.error('Error creating variant:', error)
+        console.error('Variant PATCH: Error creating variant:', error)
         return NextResponse.json(
           { error: 'Failed to create variant' },
           { status: 500 }
@@ -193,12 +152,10 @@ export async function PATCH(
 
     // If we just created the variant, return it (it already has the cost)
     if (product.variants.length === 0) {
-      console.log('Returning newly created variant')
       return NextResponse.json(variant)
     }
 
     // Otherwise, update the existing variant
-    console.log('Updating existing variant')
     const cost = data.cost
     const source = 'MANUAL' // Always save manual edits as MANUAL source
 
@@ -214,7 +171,6 @@ export async function PATCH(
       }
     })
 
-    console.log('Updated variant:', updatedVariant.id)
     return NextResponse.json(updatedVariant)
   } catch (error) {
     console.error('Error updating variant cost:', error)

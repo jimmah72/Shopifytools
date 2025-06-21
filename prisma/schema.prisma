@@ -22,6 +22,11 @@ model Store {
   products             Product[]
   shippingRules        ShippingRule[]
   variableCosts        VariableCost[]
+  
+  // Shopify data storage
+  shopifyOrders        ShopifyOrder[]
+  shopifyProducts      ShopifyProduct[]
+  syncStatuses         SyncStatus[]
 }
 
 model Product {
@@ -233,4 +238,181 @@ model VariableCost {
   store          Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
+}
+
+// New models for storing Shopify data locally
+model ShopifyOrder {
+  id                  String             @id // Use Shopify order ID directly
+  storeId             String
+  shopifyOrderNumber  Int
+  orderName           String             // Display name like "#1001"
+  email               String?
+  createdAt           DateTime
+  updatedAt           DateTime
+  closedAt            DateTime?
+  processedAt         DateTime?
+  
+  // Financial data
+  currency            String
+  totalPrice          Float
+  subtotalPrice       Float
+  totalTax            Float
+  totalDiscounts      Float
+  totalShipping       Float
+  
+  // Status fields
+  financialStatus     String
+  fulfillmentStatus   String
+  
+  // Customer data (simplified)
+  customerFirstName   String?
+  customerLastName    String?
+  customerEmail       String?
+  
+  // Shipping address (simplified)
+  shippingFirstName   String?
+  shippingLastName    String?
+  shippingAddress1    String?
+  shippingCity        String?
+  shippingProvince    String?
+  shippingCountry     String?
+  shippingZip         String?
+  
+  // Gateway info
+  gateway             String?
+  processingMethod    String?
+  
+  // Metadata
+  tags                String?
+  note                String?
+  
+  // Relationships
+  store               Store              @relation(fields: [storeId], references: [id])
+  lineItems           ShopifyLineItem[]
+  
+  // Sync tracking
+  lastSyncedAt        DateTime           @default(now())
+  
+  @@index([storeId])
+  @@index([createdAt])
+  @@index([financialStatus])
+  @@index([fulfillmentStatus])
+  @@index([lastSyncedAt])
+}
+
+model ShopifyLineItem {
+  id                String       @id // Use Shopify line item ID
+  orderId           String
+  productId         String?      // Shopify product ID
+  variantId         String?      // Shopify variant ID
+  
+  title             String
+  variantTitle      String?
+  sku               String?
+  quantity          Int
+  price             Float
+  totalDiscount     Float
+  
+  // Product details
+  productType       String?
+  vendor            String?
+  
+  // Fulfillment
+  fulfillableQuantity Int @default(0)
+  fulfillmentService  String?
+  
+  // Relationships
+  order             ShopifyOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model ShopifyProduct {
+  id              String               @id // Use Shopify product ID
+  storeId         String
+  title           String
+  handle          String
+  description     String?
+  productType     String?
+  vendor          String?
+  tags            String?
+  status          String               @default("active")
+  createdAt       DateTime
+  updatedAt       DateTime
+  publishedAt     DateTime?
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Images (store as JSON for simplicity)
+  images          Json?
+  
+  // Relationships
+  store           Store                @relation(fields: [storeId], references: [id])
+  variants        ShopifyProductVariant[]
+  
+  // Sync tracking
+  lastSyncedAt    DateTime             @default(now())
+  
+  @@index([storeId])
+  @@index([handle])
+  @@index([status])
+  @@index([lastSyncedAt])
+}
+
+model ShopifyProductVariant {
+  id                String          @id // Use Shopify variant ID
+  productId         String
+  title             String
+  sku               String?
+  price             Float
+  compareAtPrice    Float?
+  costPerItem       Float?
+  
+  // Inventory
+  inventoryQuantity Int             @default(0)
+  inventoryPolicy   String?
+  inventoryManagement String?
+  
+  // Physical properties
+  weight            Float?
+  weightUnit        String?
+  
+  // Fulfillment
+  fulfillmentService String?
+  requiresShipping  Boolean         @default(true)
+  taxable           Boolean         @default(true)
+  
+  // Options (store as JSON)
+  options           Json?
+  
+  // Relationships  
+  product           ShopifyProduct  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  @@index([productId])
+  @@index([sku])
+}
+
+model SyncStatus {
+  id              String    @id @default(uuid())
+  storeId         String
+  dataType        String    // 'orders', 'products', 'customers', etc.
+  lastSyncAt      DateTime  @default(now())
+  lastOrderId     String?   // For order pagination
+  lastProductId   String?   // For product pagination
+  lastCreatedAt   DateTime? // For time-based pagination
+  syncInProgress  Boolean   @default(false)
+  lastHeartbeat   DateTime? // Timestamp updated during sync to detect stuck processes
+  timeframeDays   Int?      // Track what timeframe the sync is running for
+  totalRecords    Int       @default(0)
+  errorMessage    String?
+  
+  store           Store     @relation(fields: [storeId], references: [id])
+  
+  @@unique([storeId, dataType])
+  @@index([storeId])
+  @@index([dataType])
 }

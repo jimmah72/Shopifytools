@@ -775,21 +775,21 @@ export async function getProductsWithoutInventoryCosts(shop: string, accessToken
   }
 }
 
-// Function to get ALL orders with pagination (LAST 30 DAYS)
-export async function getAllOrders(shop: string, accessToken: string): Promise<any[]> {
-  console.log('Shopify API - Fetching orders for last 30 days using time-based pagination...');
+// Function to get ALL orders with pagination (CONFIGURABLE TIMEFRAME)
+export async function getAllOrders(shop: string, accessToken: string, timeframeDays: number = 30): Promise<any[]> {
+  console.log(`Shopify API - Fetching orders for last ${timeframeDays} days using time-based pagination...`);
   
-  // Calculate date 30 days ago
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const createdAtMin = thirtyDaysAgo.toISOString();
+  // Calculate date X days ago
+  const daysAgo = new Date();
+  daysAgo.setDate(daysAgo.getDate() - timeframeDays);
+  const createdAtMin = daysAgo.toISOString();
   
   // Set created_at_max to today's date in ISO 8601 format
   const today = new Date();
   const createdAtMax = today.toISOString();
   
-  console.log('Shopify API - Will fetch orders for last 30 days');
-  console.log('Shopify API - created_at_min (30 days ago):', createdAtMin);
+  console.log(`Shopify API - Will fetch orders for last ${timeframeDays} days`);
+  console.log(`Shopify API - created_at_min (${timeframeDays} days ago):`, createdAtMin);
   console.log('Shopify API - created_at_max (today):', createdAtMax);
   
   let allOrders: any[] = [];
@@ -874,7 +874,7 @@ export async function getAllOrders(shop: string, accessToken: string): Promise<a
   }
   
   console.log(`Shopify API - RESULTS:`);
-  console.log(`Shopify API - Total orders fetched for last 30 days: ${allOrders.length}`);
+  console.log(`Shopify API - Total orders fetched for last ${timeframeDays} days: ${allOrders.length}`);
   console.log(`Shopify API - Pages processed: ${pageCount}`);
   console.log(`Shopify API - Date range: ${createdAtMin} to ${createdAtMax}`);
   if (oldestOrderDate) {
@@ -1270,7 +1270,10 @@ export async function getProductsVariantCostData(shop: string, accessToken: stri
 }
 
 // Function to get counts only (lighter weight for metrics)
-export async function getCounts(shop: string, accessToken: string): Promise<{
+export async function getCounts(shop: string, accessToken: string, dateOptions?: {
+  created_at_min?: string;
+  created_at_max?: string;
+}): Promise<{
   totalOrders: number;
   totalProducts: number;
 }> {
@@ -1278,7 +1281,7 @@ export async function getCounts(shop: string, accessToken: string): Promise<{
   
   // Start both counts in parallel
   const [ordersCount, productsCount] = await Promise.all([
-    getOrdersCount(shop, accessToken),
+    getOrdersCount(shop, accessToken, { status: 'any', ...dateOptions }),
     getProductsCount(shop, accessToken)
   ]);
   
@@ -1288,35 +1291,8 @@ export async function getCounts(shop: string, accessToken: string): Promise<{
   };
 }
 
-// Helper function to count orders by fetching all pages (but only counting)
-async function getOrdersCount(shop: string, accessToken: string): Promise<number> {
-  let totalCount = 0;
-  let hasNextPage = true;
-  let sinceId: string | undefined;
-  
-  while (hasNextPage) {
-    const orders = await getOrders(shop, accessToken, {
-      limit: 250,
-      status: 'any',
-      since_id: sinceId
-    });
-    
-    totalCount += orders.length;
-    
-    if (orders.length < 250) {
-      hasNextPage = false;
-    } else {
-      sinceId = orders[orders.length - 1].id;
-    }
-    
-    // Small delay between requests
-    if (hasNextPage) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-  
-  return totalCount;
-}
+// Fast function to get orders count using Shopify's count API with date filtering
+
 
 // Helper function to count products by fetching all pages (but only counting)
 async function getProductsCount(shop: string, accessToken: string): Promise<number> {
@@ -1346,4 +1322,58 @@ async function getProductsCount(shop: string, accessToken: string): Promise<numb
   }
   
   return totalCount;
+}
+
+export async function getOrdersCount(shop: string, accessToken: string, options: {
+  created_at_min?: string;
+  created_at_max?: string;
+  status?: string;
+} = {}): Promise<number> {
+  console.log('Shopify API - Getting orders count for shop:', shop)
+  
+  try {
+    validateEnvironmentVariables();
+    const formattedDomain = formatShopDomain(shop);
+
+    const url = new URL(`https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/orders/count.json`);
+    
+    // Add query parameters for date filtering
+    if (options.created_at_min) {
+      url.searchParams.set('created_at_min', options.created_at_min);
+    }
+    if (options.created_at_max) {
+      url.searchParams.set('created_at_max', options.created_at_max);
+    }
+    if (options.status) {
+      url.searchParams.set('status', options.status);
+    }
+
+    console.log('Shopify API - Making orders count request to:', url.toString())
+    
+    const response = await retryWithBackoff(async () => {
+      const res = await fetch(url.toString(), {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('Shopify API - Orders count response status:', res.status)
+
+      if (!res.ok) {
+        console.error('Shopify API - Orders count error response:', res.statusText)
+        throw new Error(`Shopify API Error: ${res.statusText}`);
+      }
+      
+      return res;
+    });
+
+    const data = await response.json();
+    const count = data.count || 0;
+    console.log(`Shopify API - Total orders count: ${count}`)
+    return count;
+  } catch (error) {
+    console.error('Shopify API - Orders count error:', error)
+    throw error;
+  }
 } 

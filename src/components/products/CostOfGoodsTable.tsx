@@ -78,7 +78,7 @@ export function CostOfGoodsTable({
   const [savingProducts, setSavingProducts] = useState<Set<string>>(new Set());
   const [variantLoading, setVariantLoading] = useState<{ [variantId: string]: boolean }>({});
   const [variantErrors, setVariantErrors] = useState<{ [variantId: string]: string | null }>({});
-  const [variantEdits, setVariantEdits] = useState<{ [variantId: string]: { cost?: number; handling?: number; misc?: number } }>({});
+  const [variantEdits, setVariantEdits] = useState<{ [variantId: string]: { cost?: number } }>({});
   const { theme } = useTheme();
 
   const formatCurrency = (amount: number) => {
@@ -204,14 +204,14 @@ export function CostOfGoodsTable({
   const handleVariantFieldChange = async (
     productId: string,
     variantId: string,
-    field: 'cost' | 'handling' | 'misc',
+    field: 'cost',
     value: number
   ) => {
     setVariantEdits(prev => ({
       ...prev,
       [variantId]: {
         ...prev[variantId],
-        [field]: value
+        cost: value
       }
     }));
   };
@@ -219,46 +219,35 @@ export function CostOfGoodsTable({
   const handleVariantFieldBlur = async (
     productId: string,
     variantId: string,
-    field: 'cost' | 'handling' | 'misc',
+    field: 'cost',
     value: number
   ) => {
-    console.log('=== FRONTEND VARIANT EDIT DEBUG ===');
-    console.log('productId:', productId);
-    console.log('variantId:', variantId);
-    console.log('field:', field);
-    console.log('value:', value);
-    
     const product = products.find(p => p.id === productId);
-    console.log('Product found:', !!product);
-    if (product) {
-      console.log('Product costSource:', product.costSource);
-      console.log('Product variants:', product.variants.map(v => ({ id: v.id, sku: v.sku })));
+    if (!product) {
+      console.error('Product not found:', productId);
+      return;
     }
     
     setVariantLoading(prev => ({ ...prev, [variantId]: true }));
     setVariantErrors(prev => ({ ...prev, [variantId]: null }));
+    
     try {
-      // PATCH to /api/products/[id]/variants/[variantId]
-      const payload: any = {};
-      if (field === 'cost') payload.cost = value;
-      if (field === 'handling') payload.handling = value;
-      if (field === 'misc') payload.misc = value;
-      payload.source = products.find(p => p.id === productId)?.costSource || 'SHOPIFY';
-      
-      console.log('Making API call to:', `/api/products/${productId}/variants/${variantId}`);
-      console.log('Payload:', payload);
+      const payload = {
+        cost: value,
+        source: product.costSource || 'SHOPIFY'
+      };
       
       const res = await fetch(`/api/products/${productId}/variants/${variantId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      
       if (!res.ok) {
         throw new Error('Failed to save variant');
       }
       
       const savedVariant = await res.json();
-      console.log('Variant saved successfully:', savedVariant);
       
       // Update local state with the saved value
       setVariantEdits(prev => ({ ...prev, [variantId]: {} }));
@@ -271,6 +260,7 @@ export function CostOfGoodsTable({
         });
       }
     } catch (err) {
+      console.error('Error saving variant cost:', err);
       setVariantErrors(prev => ({ ...prev, [variantId]: 'Failed to save' }));
     } finally {
       setVariantLoading(prev => ({ ...prev, [variantId]: false }));
@@ -534,41 +524,17 @@ export function CostOfGoodsTable({
                       {loading && <span className="ml-2 text-xs text-blue-400">Saving…</span>}
                       {error && <span className="ml-2 text-xs text-red-400">{error}</span>}
                     </TableCell>
-                    {/* Handling */}
+                    {/* Handling - Not supported at variant level */}
                     <TableCell>
-                      {isManual ? (
-                        <Input
-                          type="text"
-                          value={edits.handling !== undefined ? formatCurrencyForInput(edits.handling) : formatCurrencyForInput(variantEdits[variant.id]?.handling || 0)}
-                          onChange={e => handleVariantFieldChange(product.id, variant.id, 'handling', parseCurrencyInput(e.target.value))}
-                          onBlur={e => handleVariantFieldBlur(product.id, variant.id, 'handling', parseCurrencyInput(e.target.value))}
-                          className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                          placeholder="0.00"
-                          disabled={loading}
-                        />
-                      ) : (
-                        <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                          {formatCurrency(variantEdits[variant.id]?.handling || 0)}
-                        </div>
-                      )}
+                      <div className="w-28 h-8 flex items-center justify-center text-sm text-gray-500 bg-gray-800 rounded px-2">
+                        —
+                      </div>
                     </TableCell>
-                    {/* Misc */}
+                    {/* Misc - Not supported at variant level */}
                     <TableCell>
-                      {isManual || isShopify ? (
-                        <Input
-                          type="text"
-                          value={edits.misc !== undefined ? formatCurrencyForInput(edits.misc) : formatCurrencyForInput(variantEdits[variant.id]?.misc || 0)}
-                          onChange={e => handleVariantFieldChange(product.id, variant.id, 'misc', parseCurrencyInput(e.target.value))}
-                          onBlur={e => handleVariantFieldBlur(product.id, variant.id, 'misc', parseCurrencyInput(e.target.value))}
-                          className="w-28 text-right bg-gray-900 border-gray-700 h-8 text-sm"
-                          placeholder="0.00"
-                          disabled={loading}
-                        />
-                      ) : (
-                        <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                          {formatCurrency(variantEdits[variant.id]?.misc || 0)}
-                        </div>
-                      )}
+                      <div className="w-28 h-8 flex items-center justify-center text-sm text-gray-500 bg-gray-800 rounded px-2">
+                        —
+                      </div>
                     </TableCell>
                     {/* Margin */}
                     <TableCell className="text-sm text-gray-500">
