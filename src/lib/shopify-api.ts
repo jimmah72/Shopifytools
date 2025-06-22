@@ -888,6 +888,10 @@ export async function getAllOrders(shop: string, accessToken: string, timeframeD
 export async function getAllProducts(shop: string, accessToken: string): Promise<any[]> {
   console.log('Shopify API - Starting to fetch all products with basic data only');
   
+  // ✅ FIXED: Validate environment variables ONCE at the start instead of for each page
+  validateEnvironmentVariables();
+  const formattedDomain = formatShopDomain(shop);
+  
   let allProducts: any[] = [];
   let hasNextPage = true;
   let endCursor: string | null = null;
@@ -946,11 +950,9 @@ export async function getAllProducts(shop: string, accessToken: string): Promise
 
     try {
       const result: any = await retryWithBackoff(async (): Promise<any> => {
-        validateEnvironmentVariables();
-        const formattedDomain = formatShopDomain(shop);
-        
+        // ✅ FIXED: Remove validateEnvironmentVariables() from here - already done above
         const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/graphql.json`;
-        
+
         const response: Response = await fetch(url, {
           method: 'POST',
           headers: {
@@ -1025,6 +1027,10 @@ export async function getAllProducts(shop: string, accessToken: string): Promise
 export async function getProductsCostData(shop: string, accessToken: string, productIds: string[]): Promise<Record<string, number>> {
   console.log(`Shopify API - Fetching cost data for ${productIds.length} products on current page`);
   
+  // ✅ FIXED: Validate environment variables ONCE at the start instead of for each product
+  validateEnvironmentVariables();
+  const formattedDomain = formatShopDomain(shop);
+  
   const costMap: Record<string, number> = {};
 
   // Process products in larger batches for better performance
@@ -1065,9 +1071,7 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
 
       try {
         const result: any = await retryWithBackoff(async (): Promise<any> => {
-          validateEnvironmentVariables();
-          const formattedDomain = formatShopDomain(shop);
-          
+          // ✅ FIXED: Remove validateEnvironmentVariables() from here - already done above
           const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/graphql.json`;
           
           const response: Response = await fetch(url, {
@@ -1143,6 +1147,10 @@ export async function getProductsCostData(shop: string, accessToken: string, pro
 export async function getProductsVariantCostData(shop: string, accessToken: string, productIds: string[]): Promise<Record<string, Record<string, number>>> {
   console.log(`Shopify API - Fetching variant-specific cost data for ${productIds.length} products on current page`);
   
+  // ✅ FIXED: Validate environment variables ONCE at the start instead of for each product
+  validateEnvironmentVariables();
+  const formattedDomain = formatShopDomain(shop);
+  
   const costMap: Record<string, Record<string, number>> = {};
 
   // Process products in smaller batches since we're fetching more data per product
@@ -1183,9 +1191,7 @@ export async function getProductsVariantCostData(shop: string, accessToken: stri
 
       try {
         const result: any = await retryWithBackoff(async (): Promise<any> => {
-          validateEnvironmentVariables();
-          const formattedDomain = formatShopDomain(shop);
-          
+          // ✅ FIXED: Remove validateEnvironmentVariables() from here - already done above
           const url = `https://${formattedDomain}/admin/api/${LATEST_API_VERSION}/graphql.json`;
           
           const response: Response = await fetch(url, {

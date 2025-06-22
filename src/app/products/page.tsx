@@ -1,7 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useState, useCallback, useMemo } from 'react';
+import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { CostOfGoodsTable } from '@/components/products/CostOfGoodsTable';
+import { ProductsSyncBanner } from '@/components/products/ProductsSyncBanner';
 import { 
   Box, 
   Typography, 
@@ -81,6 +83,9 @@ const ProductsTableSkeleton = () => (
 );
 
 export default function ProductsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
   const [products, setProducts] = useState<ProductsPage.Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,14 +94,94 @@ export default function ProductsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
   
-  // Sort and filter state
-  const [sortField, setSortField] = useState<SortField>('title');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [costSourceFilter, setCostSourceFilter] = useState<CostSourceFilter>('all');
-  const [costDataFilter, setCostDataFilter] = useState<CostDataFilter>('all');
+  // ✅ FIX: Use ref for request deduplication to avoid TypeScript errors
+  const lastRequestRef = useRef<{ key: string; time: number } | null>(null);
+  
+  // Initialize filters from URL params on mount, with smart defaults
+  const [sortField, setSortField] = useState<SortField>(() => {
+    const param = searchParams.get('sort');
+    return (param as SortField) || 'title';
+  });
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    const param = searchParams.get('dir');
+    return (param as SortDirection) || 'asc';
+  });
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    const param = searchParams.get('status');
+    // If no URL params exist (initial load), default to 'Active'
+    // If URL params exist, respect them (including 'all')
+    return (param as StatusFilter) || 'Active';
+  });
+  const [costSourceFilter, setCostSourceFilter] = useState<CostSourceFilter>(() => {
+    const param = searchParams.get('source');
+    return (param as CostSourceFilter) || 'all';
+  });
+  const [costDataFilter, setCostDataFilter] = useState<CostDataFilter>(() => {
+    const param = searchParams.get('data');
+    return (param as CostDataFilter) || 'all';
+  });
   const [showFilters, setShowFilters] = useState(false);
   
+  // Track if user has interacted with filters to maintain state
+  const [hasUserInteracted, setHasUserInteracted] = useState(() => {
+    // If any URL params exist, user has interacted
+    return searchParams.toString().length > 0;
+  });
+
+  // Initialize search term from URL
+  useEffect(() => {
+    const searchParam = searchParams.get('search');
+    if (searchParam) {
+      setSearchTerm(searchParam);
+    }
+    const pageParam = searchParams.get('page');
+    if (pageParam) {
+      setCurrentPage(parseInt(pageParam, 10) || 1);
+    }
+  }, [searchParams]);
+
+  // Function to update URL with current filter state
+  const updateURL = useCallback((newParams: {
+    search?: string;
+    page?: number;
+    sort?: SortField;
+    dir?: SortDirection;
+    status?: StatusFilter;
+    source?: CostSourceFilter;
+    data?: CostDataFilter;
+  }) => {
+    const params = new URLSearchParams();
+    
+    // Add non-default values to URL
+    if (newParams.search && newParams.search.trim()) {
+      params.set('search', newParams.search);
+    }
+    if (newParams.page && newParams.page > 1) {
+      params.set('page', newParams.page.toString());
+    }
+    if (newParams.sort && newParams.sort !== 'title') {
+      params.set('sort', newParams.sort);
+    }
+    if (newParams.dir && newParams.dir !== 'asc') {
+      params.set('dir', newParams.dir);
+    }
+    if (newParams.status && newParams.status !== 'Active') {
+      params.set('status', newParams.status);
+    }
+    if (newParams.source && newParams.source !== 'all') {
+      params.set('source', newParams.source);
+    }
+    if (newParams.data && newParams.data !== 'all') {
+      params.set('data', newParams.data);
+    }
+
+    const queryString = params.toString();
+    const newUrl = queryString ? `/products?${queryString}` : '/products';
+    
+    // Use replace to avoid cluttering browser history for filter changes
+    router.replace(newUrl, { scroll: false });
+  }, [router]);
+
   // Variant expansion state (always start collapsed)
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
   
@@ -129,6 +214,29 @@ export default function ProductsPage() {
       costData: costDataFilter 
     }
   ) => {
+    // ✅ FIX: Simple request deduplication without state dependency
+    const requestKey = JSON.stringify({ page, search, sort, filters });
+    const callId = Math.random().toString(36).substring(2, 8);
+    
+    // Use a ref for cache instead of state to avoid infinite loops
+    const now = Date.now();
+    if (lastRequestRef.current && 
+        lastRequestRef.current.key === requestKey && 
+        (now - lastRequestRef.current.time) < 1000) {
+      console.log(`⚠️ Duplicate request blocked [${callId}]: Request made within 1 second`);
+      return;
+    }
+    
+    // Store last request info
+    lastRequestRef.current = { key: requestKey, time: now };
+    
+    console.log(`🎯 fetchProducts called [${callId}]
+      - Page: ${page}
+      - Search: "${search}"
+      - Sort: ${sort.field} ${sort.direction}
+      - Filters: ${JSON.stringify(filters)}
+      - Timestamp: ${new Date().toISOString()}`);
+    
     try {
       setLoading(true);
       setError(null);
@@ -145,12 +253,16 @@ export default function ProductsPage() {
         ...(filters.costData !== 'all' && { costDataFilter: filters.costData })
       });
       
+      console.log(`🌐 Making API request [${callId}]: /api/products?${params.toString()}`);
+      
       const response = await fetch(`/api/products?${params}`);
       if (!response.ok) {
         throw new Error('Failed to fetch products');
       }
       
       const data: ProductsResponse = await response.json();
+      
+      console.log(`✅ API response received [${callId}]: ${data.products.length} products`);
       
       // Transform products with a stable transform function
       const transformedProducts = data.products.map((product: any): ProductsPage.Product => ({
@@ -177,36 +289,47 @@ export default function ProductsPage() {
       // Reset expanded products when loading new page data
       setExpandedProducts(new Set());
       
+      console.log(`🎯 fetchProducts completed [${callId}]: Updated state with ${transformedProducts.length} products`);
+      
     } catch (err) {
-      console.error('Error fetching products:', err);
+      console.error(`❌ fetchProducts error [${callId}]:`, err);
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
     } finally {
       setLoading(false);
     }
-  }, [PRODUCTS_PER_PAGE, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter]);
+  }, [PRODUCTS_PER_PAGE, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter]); // ✅ REMOVED activeRequests to stop infinite loop
 
   // Effect for initial load and search/filter/sort changes
   useEffect(() => {
-    setCurrentPage(1); // Reset to first page when search or filters change
-    fetchProducts(
-      1, 
-      debouncedSearchTerm,
-      { field: sortField, direction: sortDirection },
-      { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter }
-    );
-  }, [debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, fetchProducts]);
-
-  // Effect for page changes
-  useEffect(() => {
-    if (currentPage > 1) {
+    // ✅ FIXED: Simplified dependencies to avoid double requests and infinite loops
+    // Only fetch if we have initialized from URL (avoid race conditions)
+    
+    const effectId = Math.random().toString(36).substring(2, 6);
+    console.log(`🔄 useEffect triggered [${effectId}]
+      - hasUserInteracted: ${hasUserInteracted}
+      - searchParams.length: ${searchParams.toString().length}
+      - currentPage: ${currentPage}
+      - debouncedSearchTerm: "${debouncedSearchTerm}"
+      - sortField: ${sortField}
+      - sortDirection: ${sortDirection}
+      - statusFilter: ${statusFilter}
+      - costSourceFilter: ${costSourceFilter}
+      - costDataFilter: ${costDataFilter}
+      - Will fetch: ${hasUserInteracted || searchParams.toString().length === 0}`);
+    
+    if (hasUserInteracted || searchParams.toString().length === 0) {
+      console.log(`🔄 useEffect [${effectId}] - Calling fetchProducts...`);
       fetchProducts(
         currentPage, 
         debouncedSearchTerm,
         { field: sortField, direction: sortDirection },
         { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter }
       );
+    } else {
+      console.log(`🔄 useEffect [${effectId}] - SKIPPED fetchProducts (conditions not met)`);
     }
-  }, [currentPage, debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, fetchProducts]);
+    // ✅ FIXED: Removed fetchProducts from dependencies to prevent infinite loops
+  }, [currentPage, debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, hasUserInteracted, searchParams]);
 
   // Save variant manual edits to localStorage whenever they change
   useEffect(() => {
@@ -453,35 +576,123 @@ export default function ProductsPage() {
 
   const handlePageChange = useCallback((_: React.ChangeEvent<unknown>, page: number) => {
     setCurrentPage(page);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page,
+      sort: sortField,
+      dir: sortDirection,
+      status: statusFilter,
+      source: costSourceFilter,
+      data: costDataFilter
+    });
     // Scroll to top when page changes
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
+  }, [searchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, updateURL]);
 
   const handleSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(event.target.value);
-  }, []);
+    const newSearchTerm = event.target.value;
+    setSearchTerm(newSearchTerm);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: newSearchTerm,
+      page: 1,
+      sort: sortField,
+      dir: sortDirection,
+      status: statusFilter,
+      source: costSourceFilter,
+      data: costDataFilter
+    });
+  }, [sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, updateURL]);
 
-  // Sort and filter handlers
+  // Sort and filter handlers with URL updates
   const handleSortChange = useCallback((field: SortField) => {
+    let newDirection: SortDirection = 'asc';
     if (field === sortField) {
       // Toggle direction if same field
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      // New field, default to ascending
-      setSortField(field);
-      setSortDirection('asc');
+      newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
     }
-  }, [sortField]);
+    setSortField(field);
+    setSortDirection(newDirection);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page: 1,
+      sort: field,
+      dir: newDirection,
+      status: statusFilter,
+      source: costSourceFilter,
+      data: costDataFilter
+    });
+  }, [searchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, updateURL]);
+
+  const handleStatusFilterChange = useCallback((newStatus: StatusFilter) => {
+    setStatusFilter(newStatus);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page: 1,
+      sort: sortField,
+      dir: sortDirection,
+      status: newStatus,
+      source: costSourceFilter,
+      data: costDataFilter
+    });
+  }, [searchTerm, sortField, sortDirection, costSourceFilter, costDataFilter, updateURL]);
+
+  const handleCostSourceFilterChange = useCallback((newSource: CostSourceFilter) => {
+    setCostSourceFilter(newSource);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page: 1,
+      sort: sortField,
+      dir: sortDirection,
+      status: statusFilter,
+      source: newSource,
+      data: costDataFilter
+    });
+  }, [searchTerm, sortField, sortDirection, statusFilter, costDataFilter, updateURL]);
+
+  const handleCostDataFilterChange = useCallback((newData: CostDataFilter) => {
+    setCostDataFilter(newData);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page: 1,
+      sort: sortField,
+      dir: sortDirection,
+      status: statusFilter,
+      source: costSourceFilter,
+      data: newData
+    });
+  }, [searchTerm, sortField, sortDirection, statusFilter, costSourceFilter, updateURL]);
 
   const handleFilterReset = useCallback(() => {
-    setStatusFilter('all');
+    setStatusFilter('Active');
     setCostSourceFilter('all');
     setCostDataFilter('all');
-  }, []);
+    setCurrentPage(1);
+    setHasUserInteracted(true);
+    updateURL({
+      search: searchTerm,
+      page: 1,
+      sort: sortField,
+      dir: sortDirection,
+      status: 'Active',
+      source: 'all',
+      data: 'all'
+    });
+  }, [searchTerm, sortField, sortDirection, updateURL]);
 
   const getActiveFilterCount = useMemo(() => {
     let count = 0;
-    if (statusFilter !== 'all') count++;
+    if (statusFilter !== 'Active') count++;
     if (costSourceFilter !== 'all') count++;
     if (costDataFilter !== 'all') count++;
     return count;
@@ -508,6 +719,28 @@ export default function ProductsPage() {
             See how to set up COGS
           </a>
         </Typography>
+      </Box>
+
+      {/* Products Sync Banner */}
+      <ProductsSyncBanner 
+        onSyncStart={() => {
+          // Optionally refresh products after sync
+        }}
+        onSyncComplete={() => {
+          // ✅ FIXED: Refresh the current page to show updated cost data and sync timestamps
+          console.log('ProductsPage - Sync completed, refreshing product data...');
+          fetchProducts(
+            currentPage, 
+            debouncedSearchTerm,
+            { field: sortField, direction: sortDirection },
+            { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter }
+          ).then(() => {
+            console.log('ProductsPage - Product data refreshed after sync completion');
+          });
+        }}
+      />
+
+      <Box sx={{ mb: 4 }}>
 
         {/* Search, Sort, and Filter Controls */}
         <Box sx={{ mb: 3 }}>
@@ -590,7 +823,7 @@ export default function ProductsPage() {
                 <Select
                   value={statusFilter}
                   label="Status"
-                  onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                  onChange={(e) => handleStatusFilterChange(e.target.value as StatusFilter)}
                 >
                   <MenuItem value="all">All Statuses</MenuItem>
                   <MenuItem value="Active">Active</MenuItem>
@@ -604,7 +837,7 @@ export default function ProductsPage() {
                 <Select
                   value={costSourceFilter}
                   label="Cost Source"
-                  onChange={(e) => setCostSourceFilter(e.target.value as CostSourceFilter)}
+                  onChange={(e) => handleCostSourceFilterChange(e.target.value as CostSourceFilter)}
                 >
                   <MenuItem value="all">All Sources</MenuItem>
                   <MenuItem value="SHOPIFY">Shopify</MenuItem>
@@ -617,7 +850,7 @@ export default function ProductsPage() {
                 <Select
                   value={costDataFilter}
                   label="Cost Data"
-                  onChange={(e) => setCostDataFilter(e.target.value as CostDataFilter)}
+                  onChange={(e) => handleCostDataFilterChange(e.target.value as CostDataFilter)}
                 >
                   <MenuItem value="all">All Products</MenuItem>
                   <MenuItem value="with-cost">With Cost Data</MenuItem>
@@ -640,24 +873,24 @@ export default function ProductsPage() {
           {/* Active Filter Chips */}
           {getActiveFilterCount > 0 && (
             <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-              {statusFilter !== 'all' && (
+              {statusFilter !== 'Active' && (
                 <Chip
                   label={`Status: ${statusFilter}`}
-                  onDelete={() => setStatusFilter('all')}
+                  onDelete={() => handleStatusFilterChange('Active')}
                   size="small"
                 />
               )}
               {costSourceFilter !== 'all' && (
                 <Chip
                   label={`Source: ${costSourceFilter}`}
-                  onDelete={() => setCostSourceFilter('all')}
+                  onDelete={() => handleCostSourceFilterChange('all')}
                   size="small"
                 />
               )}
               {costDataFilter !== 'all' && (
                 <Chip
                   label={`Cost: ${costDataFilter === 'with-cost' ? 'With Data' : 'Missing Data'}`}
-                  onDelete={() => setCostDataFilter('all')}
+                  onDelete={() => handleCostDataFilterChange('all')}
                   size="small"
                 />
               )}

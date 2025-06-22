@@ -334,7 +334,7 @@ model ShopifyOrder {
   
   // Status fields
   financialStatus     String
-  fulfillmentStatus   String
+  fulfillmentStatus   String?
   
   // Customer data (simplified)
   customerFirstName   String?

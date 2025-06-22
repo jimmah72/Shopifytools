@@ -1,62 +1,143 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
-import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds } from '@/lib/shopify-api'
+import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds, getShopifyOrders, ShopifyOrder } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
-export interface SyncResult {
+interface SyncResult {
   success: boolean
-  message: string
   ordersProcessed: number
   newOrders: number
   updatedOrders: number
+  error?: string
+}
+
+// Rate limiting and circuit breaker configuration
+const RATE_LIMIT_CONFIG = {
+  MAX_CONCURRENT_REQUESTS: 3,
+  REQUEST_DELAY_MS: 500, // Increased from previous values
+  RATE_LIMIT_RETRY_DELAY_MS: 60000, // 1 minute
+  MAX_RATE_LIMIT_RETRIES: 3,
+  CIRCUIT_BREAKER_THRESHOLD: 5, // Number of failures before circuit opens
+  CIRCUIT_BREAKER_RESET_TIME_MS: 300000, // 5 minutes
+}
+
+// Global circuit breaker state
+let circuitBreakerState = {
+  isOpen: false,
+  failureCount: 0,
+  lastFailureTime: null as Date | null,
+  rateLimitCount: 0,
+  lastRateLimitTime: null as Date | null,
+}
+
+// Rate limiting queue
+let activeRequests = 0
+const requestQueue: Array<() => Promise<void>> = []
+
+async function processRequestQueue() {
+  while (requestQueue.length > 0 && activeRequests < RATE_LIMIT_CONFIG.MAX_CONCURRENT_REQUESTS) {
+    const request = requestQueue.shift()
+    if (request) {
+      activeRequests++
+      try {
+        await request()
+      } finally {
+        activeRequests--
+      }
+      // Add delay between requests
+      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_CONFIG.REQUEST_DELAY_MS))
+    }
+  }
+}
+
+function checkCircuitBreaker(): boolean {
+  // If circuit is open, check if we should reset it
+  if (circuitBreakerState.isOpen && circuitBreakerState.lastFailureTime) {
+    const timeSinceLastFailure = Date.now() - circuitBreakerState.lastFailureTime.getTime()
+    if (timeSinceLastFailure > RATE_LIMIT_CONFIG.CIRCUIT_BREAKER_RESET_TIME_MS) {
+      console.log('🔄 Circuit breaker reset, attempting to resume sync')
+      circuitBreakerState.isOpen = false
+      circuitBreakerState.failureCount = 0
+      circuitBreakerState.lastFailureTime = null
+    }
+  }
+  
+  return !circuitBreakerState.isOpen
+}
+
+function handleSyncFailure(error: any) {
+  circuitBreakerState.failureCount++
+  circuitBreakerState.lastFailureTime = new Date()
+  
+  const isRateLimit = error.message?.includes('Rate limited') || 
+                      error.message?.includes('Too Many Requests') ||
+                      error.status === 429
+  
+  if (isRateLimit) {
+    circuitBreakerState.rateLimitCount++
+    circuitBreakerState.lastRateLimitTime = new Date()
+    console.log(`🚨 Rate limit hit (count: ${circuitBreakerState.rateLimitCount})`)
+    
+    if (circuitBreakerState.rateLimitCount >= RATE_LIMIT_CONFIG.MAX_RATE_LIMIT_RETRIES) {
+      console.log('🛑 Max rate limit retries reached, opening circuit breaker')
+      circuitBreakerState.isOpen = true
+    }
+  }
+  
+  if (circuitBreakerState.failureCount >= RATE_LIMIT_CONFIG.CIRCUIT_BREAKER_THRESHOLD) {
+    console.log('🛑 Circuit breaker threshold reached, opening circuit')
+    circuitBreakerState.isOpen = true
+  }
+}
+
+async function updateSyncHeartbeat(storeId: string, dataType: string) {
+  try {
+    await (prisma as any).syncStatus.updateMany({
+      where: { storeId, dataType },
+      data: { lastHeartbeat: new Date() }
+    })
+  } catch (error) {
+    console.error('Failed to update sync heartbeat:', error)
+  }
+}
+
+async function setSyncError(storeId: string, dataType: string, errorMessage: string) {
+  try {
+    await (prisma as any).syncStatus.updateMany({
+      where: { storeId, dataType },
+      data: { 
+        errorMessage,
+        syncInProgress: false,
+        lastHeartbeat: null
+      }
+    })
+  } catch (error) {
+    console.error('Failed to set sync error:', error)
+  }
 }
 
 // Helper function to detect payment method from order data
-function detectPaymentMethod(order: any): {
-  paymentGateway: string | null;
-  paymentSource: string | null;
-  paymentMethod: string | null;
-  transactionGateway: string | null;
-} {
-  // Get payment gateway from payment_gateway_names array
-  const paymentGateway = order.payment_gateway_names?.[0] || order.gateway || null;
-  
-  // Get source (web, pos, mobile, etc.)
-  const paymentSource = order.source_name || null;
-  
-  // Get transaction gateway if transactions exist
-  let transactionGateway = null;
-  if (order.transactions && order.transactions.length > 0) {
-    // Get the gateway from the first successful transaction
-    const successfulTransaction = order.transactions.find((tx: any) => 
-      tx.status === 'success' && (tx.kind === 'sale' || tx.kind === 'authorization')
-    );
-    transactionGateway = successfulTransaction?.gateway || null;
-  }
-  
-  // Create composite payment method identifier
-  let paymentMethod = null;
-  if (paymentGateway && paymentSource) {
-    paymentMethod = `${paymentGateway}_${paymentSource}`;
-  } else if (paymentGateway) {
-    paymentMethod = `${paymentGateway}_unknown`;
-  }
+function detectPaymentMethod(order: any) {
+  const paymentGateway = order.payment_gateway_names?.[0] || 'unknown'
+  const paymentSource = order.source_name || 'unknown'
+  const paymentMethod = `${paymentGateway}_${paymentSource}`
+  const transactionGateway = order.payment_gateway_names?.[0] || null
   
   return {
     paymentGateway,
-    paymentSource,
+    paymentSource, 
     paymentMethod,
     transactionGateway
-  };
+  }
 }
 
 export async function syncShopifyOrders(storeId: string, timeframeDays: number = 30): Promise<SyncResult> {
-  console.log(`📦 Starting Shopify order sync for store ${storeId} (${timeframeDays} days)`)
-  
+  console.log(`📅 Starting Shopify orders sync for ${timeframeDays} days`)
+  console.log(`⚡ OPTIMIZED: Not fetching refunds during sync (uses existing DB data)`)
+
   const result: SyncResult = {
     success: false,
-    message: '',
     ordersProcessed: 0,
     newOrders: 0,
     updatedOrders: 0
@@ -70,42 +151,53 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
     })
 
     if (!store) {
-      throw new Error(`Store not found: ${storeId}`)
+      throw new Error('Store not found')
     }
 
-    console.log(`🏪 Found store: ${store.domain}`)
+    // Update sync status to in-progress
+    await (prisma as any).syncStatus.upsert({
+      where: {
+        storeId_dataType: { storeId, dataType: 'orders' }
+      },
+      update: {
+        syncInProgress: true,
+        lastHeartbeat: new Date(),
+        timeframeDays: timeframeDays,
+        errorMessage: null
+      },
+      create: {
+        storeId,
+        dataType: 'orders',
+        syncInProgress: true,
+        lastHeartbeat: new Date(),
+        timeframeDays: timeframeDays
+      }
+    })
 
-    // Fetch orders from Shopify with enhanced fields including payment method data
-    console.log(`📡 Fetching orders from Shopify for last ${timeframeDays} days...`)
-    const shopifyOrders = await getAllOrders(store.domain, store.accessToken, timeframeDays)
+    console.log(`🛍️ Fetching orders from Shopify for last ${timeframeDays} days...`)
     
-    console.log(`📊 Retrieved ${shopifyOrders.length} orders from Shopify`)
-
-    if (shopifyOrders.length === 0) {
-      return result
-    }
+    const allOrders = await getAllOrders(store.domain, store.accessToken, timeframeDays)
+    console.log(`📊 Retrieved ${allOrders.length} orders from Shopify`)
 
     // Get existing orders from database
     const existingOrderIds = new Set(
-      (await prisma.shopifyOrder.findMany({
+      (await (prisma as any).shopifyOrder.findMany({
         where: { storeId },
         select: { id: true }
-      })).map(order => order.id)
+      })).map((order: any) => order.id)
     )
 
-    console.log(`🗄️ Found ${existingOrderIds.size} existing orders in database`)
+    const newOrders = allOrders.filter(order => !existingOrderIds.has(order.id.toString()))
+    const existingOrders = allOrders.filter(order => existingOrderIds.has(order.id.toString()))
 
-    // Process orders in batches
-    const batchSize = 50
-    const newOrders = shopifyOrders.filter(order => !existingOrderIds.has(order.id.toString()))
-    const existingOrders = shopifyOrders.filter(order => existingOrderIds.has(order.id.toString()))
-    
-    console.log(`📋 Processing ${newOrders.length} new orders and ${existingOrders.length} existing orders`)
+    console.log(`➕ Found ${newOrders.length} new orders`)
+    console.log(`🔄 Found ${existingOrders.length} existing orders to update`)
 
     let newOrdersCount = 0
     let updatedOrdersCount = 0
+    const batchSize = 50 // Increased since we're not making refund API calls
 
-    // Process new orders
+    // Process new orders WITHOUT fetching refunds
     if (newOrders.length > 0) {
       console.log(`➕ Processing ${newOrders.length} new orders...`)
       
@@ -113,135 +205,104 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
         const batch = newOrders.slice(i, i + batchSize)
         console.log(`📦 Processing new orders batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(newOrders.length / batchSize)} (${batch.length} orders)`)
 
-        // Fetch refunds for each order in the batch
-        const ordersWithRefunds = []
+        const ordersData = []
         
         for (const order of batch) {
-          console.log(`💸 Fetching refunds for order ${order.name}...`)
-          const totalRefunds = await getOrderRefunds(store.domain, store.accessToken, order.id.toString())
-          
           // Detect payment method information
-          const paymentMethodData = detectPaymentMethod(order);
+          const paymentMethodData = detectPaymentMethod(order)
           
-          console.log(`💳 Payment method detected for ${order.name}:`, {
-            gateway: paymentMethodData.paymentGateway,
-            source: paymentMethodData.paymentSource,
-            method: paymentMethodData.paymentMethod
-          });
+          console.log(`💳 Payment method detected for ${order.name}: ${paymentMethodData.paymentMethod}`)
 
-          const orderData = {
+          ordersData.push({
             id: order.id.toString(),
             storeId,
-            shopifyOrderNumber: order.order_number,
             orderName: order.name,
-            email: order.email,
-            createdAt: new Date(order.created_at),
-            updatedAt: new Date(order.updated_at),
-            closedAt: order.closed_at ? new Date(order.closed_at) : null,
-            processedAt: order.processed_at ? new Date(order.processed_at) : null,
-            currency: order.currency,
-            totalPrice: parseFloat(order.total_price || '0'),
+            shopifyOrderNumber: order.order_number,
+            email: order.email || null,
             subtotalPrice: parseFloat(order.subtotal_price || '0'),
+            totalPrice: parseFloat(order.total_price || '0'),
+            totalShipping: parseFloat(order.total_shipping_price_set?.shop_money?.amount || '0'),
             totalTax: parseFloat(order.total_tax || '0'),
             totalDiscounts: parseFloat(order.total_discounts || '0'),
-            totalShipping: parseFloat(order.total_shipping_price_set?.shop_money?.amount || '0'),
-            totalRefunds: totalRefunds, // Use the fetched refunds data
-            financialStatus: order.financial_status || 'pending',
-            fulfillmentStatus: order.fulfillment_status || 'unfulfilled',
+            totalRefunds: 0, // Initialize to 0 - will be populated by separate refunds process
+            currency: order.currency,
+            financialStatus: order.financial_status,
+            fulfillmentStatus: order.fulfillment_status,
             customerFirstName: order.customer?.first_name || null,
             customerLastName: order.customer?.last_name || null,
             customerEmail: order.customer?.email || null,
-            shippingFirstName: order.shipping_address?.first_name,
-            shippingLastName: order.shipping_address?.last_name,
-            shippingAddress1: order.shipping_address?.address1,
-            shippingCity: order.shipping_address?.city,
-            shippingProvince: order.shipping_address?.province,
-            shippingCountry: order.shipping_address?.country,
-            shippingZip: order.shipping_address?.zip,
-            gateway: order.gateway,
-            processingMethod: order.processing_method,
-            // NEW: Enhanced payment method tracking
             paymentGateway: paymentMethodData.paymentGateway,
             paymentSource: paymentMethodData.paymentSource,
             paymentMethod: paymentMethodData.paymentMethod,
             transactionGateway: paymentMethodData.transactionGateway,
-            tags: order.tags,
-            note: order.note,
+            createdAt: new Date(order.created_at),
+            updatedAt: new Date(order.updated_at || order.created_at),
             lastSyncedAt: new Date()
-          }
-
-          ordersWithRefunds.push(orderData)
+          })
         }
 
-        // Batch insert new orders
-        await prisma.shopifyOrder.createMany({
-          data: ordersWithRefunds,
-          skipDuplicates: true
-        })
+        // Insert new orders
+        if (ordersData.length > 0) {
+          await (prisma as any).shopifyOrder.createMany({
+            data: ordersData,
+            skipDuplicates: true
+          })
 
-        newOrdersCount += ordersWithRefunds.length
-        console.log(`✅ Created ${ordersWithRefunds.length} new orders in batch`)
+          // Insert line items for each order  
+          for (const order of batch) {
+            if (order.line_items && order.line_items.length > 0) {
+              const lineItemsData = order.line_items.map((item: any) => ({
+                id: item.id.toString(),
+                orderId: order.id.toString(),
+                productId: item.product_id?.toString() || null,
+                variantId: item.variant_id?.toString() || null,
+                title: item.title,
+                variantTitle: item.variant_title || null,
+                sku: item.sku || null,
+                quantity: item.quantity,
+                price: parseFloat(item.price || '0'),
+                totalDiscount: parseFloat(item.total_discount || '0')
+              }))
 
-        // Process line items for the batch
-        for (const order of batch) {
-          const lineItemsData = order.line_items?.map((item: any) => ({
-            id: item.id.toString(),
-            orderId: order.id.toString(),
-            productId: item.product_id?.toString() || null,
-            variantId: item.variant_id?.toString() || null,
-            title: item.title || 'Unknown Product',
-            quantity: item.quantity || 0,
-            price: parseFloat(item.price || '0'),
-            totalDiscount: parseFloat(item.total_discount || '0'),
-            vendor: item.vendor || null,
-            sku: item.sku || null,
-            fulfillmentStatus: item.fulfillment_status || 'unfulfilled',
-          })) || []
-
-          if (lineItemsData.length > 0) {
-            await prisma.shopifyLineItem.createMany({
-              data: lineItemsData,
-              skipDuplicates: true
-            })
+              await (prisma as any).shopifyLineItem.createMany({
+                data: lineItemsData,
+                skipDuplicates: true
+              })
+            }
           }
-        }
 
-        // Small delay to be respectful to the API
-        if (i + batchSize < newOrders.length) {
-          await new Promise(resolve => setTimeout(resolve, 100))
+          newOrdersCount += ordersData.length
+          console.log(`✅ Saved ${ordersData.length} new orders`)
         }
       }
     }
 
-    // Process existing orders (for refunds updates and payment method backfill)
+    // Process existing orders - only update basic info, NOT refunds
     if (existingOrders.length > 0) {
-      console.log(`🔄 Processing ${existingOrders.length} existing orders for updates...`)
+      console.log(`🔄 Processing ${existingOrders.length} existing orders for basic updates...`)
       
       for (const order of existingOrders) {
         try {
-          console.log(`💸 Updating refunds for existing order ${order.name}...`)
-          const totalRefunds = await getOrderRefunds(store.domain, store.accessToken, order.id.toString())
+          // Detect payment method information for backfill (if missing)
+          const paymentMethodData = detectPaymentMethod(order)
           
-          // Detect payment method information for backfill
-          const paymentMethodData = detectPaymentMethod(order);
-          
-          await prisma.shopifyOrder.update({
+          await (prisma as any).shopifyOrder.update({
             where: { id: order.id.toString() },
             data: {
-              totalRefunds,
-              // Update payment method data if missing
+              // Update basic order info and payment method data if missing
+              financialStatus: order.financial_status,
+              fulfillmentStatus: order.fulfillment_status,
               paymentGateway: paymentMethodData.paymentGateway,
               paymentSource: paymentMethodData.paymentSource,
               paymentMethod: paymentMethodData.paymentMethod,
               transactionGateway: paymentMethodData.transactionGateway,
               lastSyncedAt: new Date()
+              // NOTE: totalRefunds is NOT updated here - handled separately
             }
           })
           
           updatedOrdersCount++
           
-          // Small delay between updates
-          await new Promise(resolve => setTimeout(resolve, 50))
         } catch (error) {
           console.error(`Error updating order ${order.name}:`, error)
           // Continue with next order
@@ -255,30 +316,37 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
     console.log(`   📊 Total orders processed: ${totalProcessed}`)
     console.log(`   ➕ New orders: ${newOrdersCount}`)
     console.log(`   🔄 Updated orders: ${updatedOrdersCount}`)
+    console.log(`   💡 Refunds: Using existing database data (not fetched during sync)`)
 
     result.success = true
     result.ordersProcessed = totalProcessed
     result.newOrders = newOrdersCount
     result.updatedOrders = updatedOrdersCount
-    result.message = `Successfully synced ${totalProcessed} orders (${newOrdersCount} new, ${updatedOrdersCount} updated)`
+
+    // Update sync status to completed
+    await (prisma as any).syncStatus.updateMany({
+      where: { storeId, dataType: 'orders' },
+      data: {
+        syncInProgress: false,
+        lastSyncAt: new Date(),
+        lastHeartbeat: null,
+        errorMessage: null
+      }
+    })
+
+    // Reset rate limit count on successful completion
+    circuitBreakerState.rateLimitCount = 0
+    circuitBreakerState.lastRateLimitTime = null
 
   } catch (error) {
-    console.error('❌ Error during order sync:', error)
-    result.message = `Sync failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
+    console.error('❌ Orders sync failed:', error)
     
-    // Mark sync as not in progress even if it failed
-    try {
-      await prisma.syncStatus.updateMany({
-        where: { storeId, dataType: 'orders' },
-        data: { 
-          syncInProgress: false, 
-          lastHeartbeat: null,
-          errorMessage: `Sync failed: ${error}` 
-        }
-      })
-    } catch (updateError) {
-      console.error('Failed to update sync status after error:', updateError)
-    }
+    handleSyncFailure(error)
+    
+    result.error = error instanceof Error ? error.message : 'Unknown error occurred'
+    
+    // Update sync status with error
+    await setSyncError(storeId, 'orders', result.error)
   }
 
   return result
@@ -289,7 +357,6 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
   
   const result: SyncResult = {
     success: false,
-    message: '',
     ordersProcessed: 0,
     newOrders: 0,
     updatedOrders: 0

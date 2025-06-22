@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { RefreshCw, Clock, Database, AlertCircle } from 'lucide-react';
+import { RefreshCw, Clock, Database, AlertCircle, StopCircle, Pause, Play } from 'lucide-react';
 
 interface SyncStatus {
   storeId: string;
@@ -41,7 +41,7 @@ interface SyncProgressIndicatorProps {
   timeframe: string;
   onTimeframeChange: (timeframe: string) => void;
   onTriggerSync: () => void;
-  onSyncComplete?: () => void; // New callback for when sync finishes
+  onSyncComplete?: () => void;
   className?: string;
 }
 
@@ -63,8 +63,22 @@ export function SyncProgressIndicator({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [wasSyncActive, setWasSyncActive] = useState(false);
-  const [lastAutoSyncTimeframe, setLastAutoSyncTimeframe] = useState<string | null>(null);
-  const [hasUserChangedTimeframe, setHasUserChangedTimeframe] = useState(false);
+  
+  // Circuit breaker state
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [rateLimitRetryCount, setRateLimitRetryCount] = useState(0);
+  const [lastRateLimitTime, setLastRateLimitTime] = useState<Date | null>(null);
+  const [autoSyncPaused, setAutoSyncPaused] = useState(false);
+  const [manuallyPaused, setManuallyPaused] = useState(false);
+  
+  // Refs for cleanup
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const rateLimitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Constants for circuit breaker
+  const MAX_RATE_LIMIT_RETRIES = 3;
+  const RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+  const POLLING_INTERVAL_MS = 8000; // Increased from 5 seconds
 
   const fetchSyncStatus = async () => {
     try {
@@ -77,9 +91,25 @@ export function SyncProgressIndicator({
       
       const data = await response.json();
       
+      // Check for rate limiting indicators
+      const hasRateLimitError = data.sync.orders.errorMessage?.includes('Rate limited') || 
+                               data.sync.orders.errorMessage?.includes('Too Many Requests');
+      
+      if (hasRateLimitError) {
+        handleRateLimit();
+      } else {
+        // Reset rate limit state if sync is working
+        if (isRateLimited && !hasRateLimitError) {
+          console.log('✅ Rate limiting resolved, resuming normal operation');
+          setIsRateLimited(false);
+          setRateLimitRetryCount(0);
+          setLastRateLimitTime(null);
+        }
+      }
+      
       // Check if sync just completed (was active, now inactive)
       if (wasSyncActive && !data.sync.isActive) {
-        console.log('Sync completed! Triggering dashboard refresh...');
+        console.log('✅ Sync completed! Triggering dashboard refresh...');
         onSyncComplete?.();
       }
       
@@ -94,87 +124,95 @@ export function SyncProgressIndicator({
     }
   };
 
-  useEffect(() => {
-    fetchSyncStatus();
+  const handleRateLimit = () => {
+    console.log('🚨 Rate limiting detected, implementing circuit breaker');
+    setIsRateLimited(true);
+    setRateLimitRetryCount(prev => prev + 1);
+    setLastRateLimitTime(new Date());
     
-    // On component mount, check for and resume any stuck syncs
-    resumeStuckSyncs();
-    
-    // Auto-refresh every 5 seconds if sync is active
-    const interval = setInterval(() => {
-      if (syncStatus?.sync.isActive) {
-        fetchSyncStatus();
-      }
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [timeframe, syncStatus?.sync.isActive]);
-
-  // Function to automatically resume stuck syncs
-  const resumeStuckSyncs = async () => {
-    try {
-      console.log('SyncProgressIndicator: Checking for stuck syncs...');
-      const response = await fetch('/api/sync/resume', {
-        method: 'POST'
-      });
+    if (rateLimitRetryCount >= MAX_RATE_LIMIT_RETRIES) {
+      console.log('🛑 Max rate limit retries reached, pausing auto-sync');
+      setAutoSyncPaused(true);
       
-      if (response.ok) {
-        const result = await response.json();
-        if (result.resumedSyncs > 0) {
-          console.log(`SyncProgressIndicator: Resumed ${result.resumedSyncs} stuck syncs`);
-          // Refresh status to show resumed syncs
-          setTimeout(() => fetchSyncStatus(), 2000);
-        } else {
-          console.log('SyncProgressIndicator: No stuck syncs found');
-        }
+      // Auto-resume after cooldown
+      if (rateLimitTimeoutRef.current) {
+        clearTimeout(rateLimitTimeoutRef.current);
       }
-    } catch (error) {
-      console.error('SyncProgressIndicator: Error checking for stuck syncs:', error);
+      rateLimitTimeoutRef.current = setTimeout(() => {
+        console.log('⏰ Rate limit cooldown complete, resuming auto-sync');
+        setIsRateLimited(false);
+        setRateLimitRetryCount(0);
+        setAutoSyncPaused(false);
+        setLastRateLimitTime(null);
+      }, RATE_LIMIT_COOLDOWN_MS);
     }
   };
 
-  // Simple auto-sync: Always sync when progress < 100%
-  useEffect(() => {
-    if (syncStatus && 
-        syncStatus.sync.isActive && 
-        syncStatus.orders.remaining > 0 &&
-        !loading) {
-      
-      console.log(`Auto-triggering sync for ${timeframe}: Missing ${syncStatus.orders.remaining} orders (${syncStatus.orders.progress}% complete)`);
-      handleAutoSync();
+  const stopSync = async () => {
+    try {
+      console.log('🛑 Manually stopping sync...');
+      const response = await fetch('/api/sync/cleanup', { method: 'POST' });
+      if (response.ok) {
+        setManuallyPaused(true);
+        // Refresh status after stopping
+        setTimeout(() => fetchSyncStatus(), 1000);
+      }
+    } catch (error) {
+      console.error('Failed to stop sync:', error);
     }
-  }, [syncStatus, timeframe]);
+  };
 
-  // Track when user manually changes timeframe (not from re-renders)
+  const resumeSync = () => {
+    console.log('▶️ Manually resuming sync...');
+    setManuallyPaused(false);
+    setAutoSyncPaused(false);
+    setIsRateLimited(false);
+    setRateLimitRetryCount(0);
+  };
+
+  useEffect(() => {
+    fetchSyncStatus();
+    
+    // Clear any existing intervals
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    
+    // Set up polling with circuit breaker logic
+    intervalRef.current = setInterval(() => {
+      if (syncStatus?.sync.isActive && !manuallyPaused) {
+        fetchSyncStatus();
+      }
+    }, POLLING_INTERVAL_MS);
+    
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      if (rateLimitTimeoutRef.current) {
+        clearTimeout(rateLimitTimeoutRef.current);
+      }
+    };
+  }, [timeframe, syncStatus?.sync.isActive, manuallyPaused]);
+
+  // DISABLED: Removed auto-sync logic to prevent loops
+  // The auto-sync was causing infinite loops with rate limiting
+  // Users must manually trigger syncs now
+
+  // Track when user manually changes timeframe
   const handleTimeframeChange = (newTimeframe: string) => {
     if (newTimeframe !== timeframe) {
-      setHasUserChangedTimeframe(true);
       onTimeframeChange(newTimeframe);
     }
   };
 
-  const handleAutoSync = async () => {
-    try {
-      const timeframeDays = getTimeframeDays(timeframe);
-      console.log(`Auto-triggering sync for ${timeframeDays} days...`);
-      
-      const response = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          dataType: 'orders',
-          timeframeDays: timeframeDays
-        })
-      });
-      
-      if (response.ok) {
-        console.log('Auto-sync triggered successfully');
-        // Refresh status after triggering
-        setTimeout(() => fetchSyncStatus(), 1000);
-      }
-    } catch (error) {
-      console.error('Failed to auto-trigger sync:', error);
+  const handleManualSync = async () => {
+    if (isRateLimited && rateLimitRetryCount >= MAX_RATE_LIMIT_RETRIES) {
+      alert('Sync is rate limited. Please wait for the cooldown period to complete.');
+      return;
     }
+    
+    onTriggerSync();
   };
 
   const getTimeframeDays = (timeframe: string): number => {
@@ -203,6 +241,22 @@ export function SyncProgressIndicator({
     
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  };
+
+  const formatRateLimitStatus = () => {
+    if (!isRateLimited) return null;
+    
+    const timeRemaining = lastRateLimitTime 
+      ? Math.max(0, RATE_LIMIT_COOLDOWN_MS - (Date.now() - lastRateLimitTime.getTime()))
+      : 0;
+    
+    const minutesRemaining = Math.ceil(timeRemaining / (1000 * 60));
+    
+    return (
+      <div className="text-xs text-yellow-400 mt-1">
+        ⚠️ Rate limited - Cooldown: {minutesRemaining > 0 ? `${minutesRemaining}m remaining` : 'Ending soon'}
+      </div>
+    );
   };
 
   if (loading) {
@@ -237,6 +291,8 @@ export function SyncProgressIndicator({
 
   if (!syncStatus) return null;
 
+  const isStuck = syncStatus.sync.isActive && syncStatus.orders.remaining > 0 && isRateLimited;
+
   return (
     <div className={`bg-gray-800 rounded-lg p-4 border border-gray-700 ${className}`}>
       {/* Header */}
@@ -248,6 +304,18 @@ export function SyncProgressIndicator({
             <Badge variant="outline" className="bg-blue-900/50 border-blue-500 text-blue-300">
               <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
               Syncing
+            </Badge>
+          )}
+          {isRateLimited && (
+            <Badge variant="outline" className="bg-yellow-900/50 border-yellow-500 text-yellow-300">
+              <AlertCircle className="w-3 h-3 mr-1" />
+              Rate Limited
+            </Badge>
+          )}
+          {manuallyPaused && (
+            <Badge variant="outline" className="bg-gray-600/50 border-gray-500 text-gray-300">
+              <Pause className="w-3 h-3 mr-1" />
+              Paused
             </Badge>
           )}
         </div>
@@ -293,6 +361,7 @@ export function SyncProgressIndicator({
               {syncStatus.orders.remaining.toLocaleString()} remaining
             </div>
           )}
+          {formatRateLimitStatus()}
         </div>
 
         {/* Products Count */}
@@ -301,10 +370,10 @@ export function SyncProgressIndicator({
           <span className="text-gray-300">{syncStatus.products.synced.toLocaleString()}</span>
         </div>
 
-        {/* Last Sync Times */}
-        <div className="flex items-center justify-between text-xs pt-2 border-t border-gray-700">
+        {/* Controls and Status */}
+        <div className="border-t border-gray-700 pt-3">
           <div className="flex items-center gap-4">
-            <span className="text-gray-400">
+            <span className="text-gray-400 text-xs">
               Last sync: {formatLastSync(syncStatus.sync.orders.lastSyncAt)}
             </span>
             {syncStatus.sync.orders.errorMessage && (
@@ -314,43 +383,60 @@ export function SyncProgressIndicator({
             )}
           </div>
           
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onTriggerSync}
-              disabled={syncStatus.sync.isActive}
-              className="h-6 px-2 text-xs"
-            >
-              {syncStatus.sync.isActive ? (
-                <>
-                  <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                  Syncing...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-3 h-3 mr-1" />
-                  Sync Now
-                </>
-              )}
-            </Button>
+          <div className="flex gap-2 mt-2">
+            {!syncStatus.sync.isActive ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleManualSync}
+                disabled={isRateLimited && rateLimitRetryCount >= MAX_RATE_LIMIT_RETRIES}
+                className="h-6 px-2 text-xs"
+              >
+                <RefreshCw className="w-3 h-3 mr-1" />
+                Sync Now
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={stopSync}
+                className="h-6 px-2 text-xs bg-red-600 hover:bg-red-700 border-red-500"
+              >
+                <StopCircle className="w-3 h-3 mr-1" />
+                Stop Sync
+              </Button>
+            )}
             
-            {/* Recovery button - only show if sync seems stuck */}
-            {syncStatus.sync.isActive && (
+            {manuallyPaused && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={resumeSync}
+                className="h-6 px-2 text-xs bg-green-600 hover:bg-green-700 border-green-500"
+              >
+                <Play className="w-3 h-3 mr-1" />
+                Resume
+              </Button>
+            )}
+            
+            {/* Emergency Reset button */}
+            {isStuck && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={async () => {
                   try {
                     await fetch('/api/sync/cleanup', { method: 'POST' });
-                    // Refresh status after cleanup
+                    setIsRateLimited(false);
+                    setRateLimitRetryCount(0);
+                    setAutoSyncPaused(false);
                     setTimeout(() => window.location.reload(), 1000);
                   } catch (error) {
                     console.error('Failed to cleanup stuck sync:', error);
                   }
                 }}
                 className="h-6 px-2 text-xs bg-yellow-600 hover:bg-yellow-700 border-yellow-500"
-                title="Reset stuck sync if it appears frozen"
+                title="Emergency reset for stuck/rate-limited sync"
               >
                 <AlertCircle className="w-3 h-3 mr-1" />
                 Reset

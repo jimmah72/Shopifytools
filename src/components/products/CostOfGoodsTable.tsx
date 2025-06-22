@@ -12,7 +12,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, CheckCircle, XCircle } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -41,6 +41,7 @@ namespace CostOfGoodsTable {
     costSource: 'SHOPIFY' | 'MANUAL';
     shopifyCostOfGoodsSold?: number | null;
     shopifyHandlingFees?: number;
+    lastSyncedAt?: string | null;
     variants: Variant[];
   }
 }
@@ -80,6 +81,19 @@ export function CostOfGoodsTable({
   const [variantErrors, setVariantErrors] = useState<{ [variantId: string]: string | null }>({});
   const [variantEdits, setVariantEdits] = useState<{ [variantId: string]: { cost?: number } }>({});
   const { theme } = useTheme();
+
+  // ✅ DEBUG: Log when products data changes to track sync refresh
+  React.useEffect(() => {
+    console.log(`📦 CostOfGoodsTable received ${products.length} products`);
+    const productsWithSyncTimestamps = products.filter(p => p.lastSyncedAt);
+    console.log(`📦 Products with sync timestamps: ${productsWithSyncTimestamps.length}`);
+    if (productsWithSyncTimestamps.length > 0) {
+      const latestSync = productsWithSyncTimestamps
+        .map(p => new Date(p.lastSyncedAt!).getTime())
+        .reduce((latest, current) => Math.max(latest, current), 0);
+      console.log(`📦 Latest sync timestamp: ${new Date(latestSync).toISOString()}`);
+    }
+  }, [products]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -200,6 +214,30 @@ export function CostOfGoodsTable({
     return product.shopifyCostOfGoodsSold !== null && product.shopifyCostOfGoodsSold !== undefined;
   };
 
+  // Check if product was synced within the last 8 hours
+  const isRecentlySynced = (product: CostOfGoodsTable.Product) => {
+    if (!product.lastSyncedAt) {
+      console.log(`🔍 Sync check for "${product.title}": No lastSyncedAt timestamp`);
+      return false;
+    }
+    
+    const syncTime = new Date(product.lastSyncedAt);
+    const now = new Date();
+    const eightHoursAgo = new Date(now.getTime() - 8 * 60 * 60 * 1000);
+    
+    const minutesAgo = (now.getTime() - syncTime.getTime()) / (1000 * 60);
+    const hoursAgo = minutesAgo / 60;
+    
+    console.log(`🔍 Sync check for "${product.title}":
+      - Synced: ${product.lastSyncedAt} 
+      - ${minutesAgo.toFixed(1)} minutes ago (${hoursAgo.toFixed(1)} hours ago)
+      - Cutoff: ${eightHoursAgo.toISOString()}
+      - Is recent: ${syncTime > eightHoursAgo ? '✅ YES' : '❌ NO'}`);
+    
+    const isRecent = syncTime > eightHoursAgo;
+    return isRecent;
+  };
+
   // Handler for auto-saving variant fields
   const handleVariantFieldChange = async (
     productId: string,
@@ -285,6 +323,7 @@ export function CostOfGoodsTable({
               <TableHead className="font-medium text-gray-400 w-[100px] text-left">Last Edited</TableHead>
               <TableHead className="font-medium text-gray-400 w-[100px] text-left">Selling Price</TableHead>
               <TableHead className="font-medium text-gray-400 w-[100px] text-left">Source</TableHead>
+              <TableHead className="font-medium text-gray-400 w-[80px] text-center">Synced</TableHead>
               <TableHead className="font-medium text-gray-400 w-[130px] text-left">Cost of Goods Sold</TableHead>
               <TableHead className="font-medium text-gray-400 w-[130px] text-left">Handling Fees</TableHead>
               <TableHead className="font-medium text-gray-400 w-[130px] text-left">Misc</TableHead>
@@ -400,6 +439,19 @@ export function CostOfGoodsTable({
                   </div>
                 </TableCell>
                 <TableCell>
+                  <div className="flex items-center justify-center">
+                    {isRecentlySynced(product) ? (
+                      <div title="Synced within last 8 hours">
+                        <CheckCircle className="w-5 h-5 text-green-400" />
+                      </div>
+                    ) : (
+                      <div title="Not synced recently (over 8 hours ago)">
+                        <XCircle className="w-5 h-5 text-red-400" />
+                      </div>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
                   {isFieldEditable(product, 'cost') ? (
                     <Input
                       type="text"
@@ -503,6 +555,7 @@ export function CostOfGoodsTable({
                     <TableCell className="text-sm text-gray-500">—</TableCell>
                     <TableCell className="text-sm text-gray-500">—</TableCell>
                     <TableCell className="text-right font-medium text-sm">{formatCurrency(variant.price)}</TableCell>
+                    <TableCell className="text-sm text-gray-500">—</TableCell>
                     <TableCell className="text-sm text-gray-500">—</TableCell>
                     {/* Cost */}
                     <TableCell>
