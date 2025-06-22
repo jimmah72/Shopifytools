@@ -118,12 +118,13 @@ export async function GET(request: NextRequest) {
       ? Math.round((localOrdersCount / totalOrdersFromShopify) * 100 * 100) / 100 // Round to 2 decimal places
       : 0
 
-    // Simple logic: sync is active if progress < 100%
-    const isSyncActive = syncProgress < 100
-
     // Get sync status records for reference
     const ordersSyncStatus = syncStatuses.find(s => s.dataType === 'orders')
     const productsSyncStatus = syncStatuses.find(s => s.dataType === 'products')
+
+    // ✅ FIXED: sync is active only when actually running, not just when sync is needed
+    const isSyncActive = ordersSyncStatus?.syncInProgress || false
+    const syncNeeded = syncProgress < 100 && !isSyncActive
 
     // Get product counts
     const localProductsCount = await prisma.shopifyProduct.count({
@@ -147,7 +148,8 @@ export async function GET(request: NextRequest) {
         synced: localProductsCount
       },
       sync: {
-        isActive: isSyncActive,
+        isActive: isSyncActive,        // ✅ Now correctly reflects actual sync running
+        isNeeded: syncNeeded,          // ✅ New field for when sync is needed but not running
         orders: {
           lastSyncAt: ordersSyncStatus?.lastSyncAt?.toISOString(),
           inProgress: ordersSyncStatus?.syncInProgress || false,

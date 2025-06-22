@@ -24,6 +24,7 @@ interface SyncStatus {
   };
   sync: {
     isActive: boolean;
+    isNeeded?: boolean;
     orders: {
       lastSyncAt?: string;
       inProgress: boolean;
@@ -111,6 +112,12 @@ export function SyncProgressIndicator({
       if (wasSyncActive && !data.sync.isActive) {
         console.log('✅ Sync completed! Triggering dashboard refresh...');
         onSyncComplete?.();
+      }
+      
+      // ✅ NEW: Auto-trigger sync when needed but not running (only once)
+      if (data.sync.isNeeded && !data.sync.isActive && !manuallyPaused && !isRateLimited) {
+        console.log('🚀 Auto-triggering sync - sync needed but not running');
+        onTriggerSync();
       }
       
       // Update sync status and track if it was active
@@ -304,6 +311,12 @@ export function SyncProgressIndicator({
             <Badge variant="outline" className="bg-blue-900/50 border-blue-500 text-blue-300">
               <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
               Syncing
+            </Badge>
+          )}
+          {syncStatus.sync.isNeeded && !syncStatus.sync.isActive && (
+            <Badge variant="outline" className="bg-yellow-900/50 border-yellow-500 text-yellow-300">
+              <AlertCircle className="w-3 h-3 mr-1" />
+              Sync Needed
             </Badge>
           )}
           {isRateLimited && (
