@@ -19,7 +19,7 @@ import {
   Chip,
   Button
 } from '@mui/material';
-import { Search, FilterList, Sort } from '@mui/icons-material';
+import { Search, FilterList, Sort, Refresh } from '@mui/icons-material';
 import { useDebounce } from '@/hooks/useDebounce';
 
 namespace ProductsPage {
@@ -47,6 +47,7 @@ namespace ProductsPage {
     costSource: 'SHOPIFY' | 'MANUAL';
     shopifyCostOfGoodsSold?: number | null;
     shopifyHandlingFees?: number;
+    lastSyncedAt?: string | null;
     variants: Variant[];
   }
 }
@@ -93,6 +94,17 @@ export default function ProductsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
+  
+  // ✅ NEW: Auto-sync control and manual sync functionality
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
+    // Default to enabled, but allow user to disable
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('productsAutoSync');
+      return saved ? JSON.parse(saved) : true;
+    }
+    return true;
+  });
+  const [manualSyncLoading, setManualSyncLoading] = useState(false);
   
   // ✅ FIX: Use ref for request deduplication to avoid TypeScript errors
   const lastRequestRef = useRef<{ key: string; time: number } | null>(null);
@@ -212,10 +224,11 @@ export default function ProductsPage() {
       status: statusFilter, 
       costSource: costSourceFilter, 
       costData: costDataFilter 
-    }
+    },
+    forceSync: boolean = false
   ) => {
     // ✅ FIX: Simple request deduplication without state dependency
-    const requestKey = JSON.stringify({ page, search, sort, filters });
+    const requestKey = JSON.stringify({ page, search, sort, filters, forceSync });
     const callId = Math.random().toString(36).substring(2, 8);
     
     // Use a ref for cache instead of state to avoid infinite loops
@@ -235,6 +248,8 @@ export default function ProductsPage() {
       - Search: "${search}"
       - Sort: ${sort.field} ${sort.direction}
       - Filters: ${JSON.stringify(filters)}
+      - Auto-sync: ${autoSyncEnabled}
+      - Force sync: ${forceSync}
       - Timestamp: ${new Date().toISOString()}`);
     
     try {
@@ -244,13 +259,14 @@ export default function ProductsPage() {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: PRODUCTS_PER_PAGE.toString(),
-        fetchCosts: 'true', // Always fetch cost data for current page
+        fetchCosts: (autoSyncEnabled || forceSync) ? 'true' : 'false',
         sortField: sort.field,
         sortDirection: sort.direction,
         ...(search && { search }),
         ...(filters.status !== 'all' && { statusFilter: filters.status }),
         ...(filters.costSource !== 'all' && { costSourceFilter: filters.costSource }),
-        ...(filters.costData !== 'all' && { costDataFilter: filters.costData })
+        ...(filters.costData !== 'all' && { costDataFilter: filters.costData }),
+        ...(forceSync && { forceSync: 'true' })
       });
       
       console.log(`🌐 Making API request [${callId}]: /api/products?${params.toString()}`);
@@ -279,6 +295,7 @@ export default function ProductsPage() {
         costSource: product.costSource,
         shopifyCostOfGoodsSold: product.shopifyCostOfGoodsSold, // Preserve null values - don't default to 0
         shopifyHandlingFees: product.shopifyHandlingFees || 0,
+        lastSyncedAt: product.lastSyncedAt,
         variants: product.variants || []
       }));
       
@@ -297,7 +314,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [PRODUCTS_PER_PAGE, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter]); // ✅ REMOVED activeRequests to stop infinite loop
+  }, [PRODUCTS_PER_PAGE, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, autoSyncEnabled]);
 
   // Effect for initial load and search/filter/sort changes
   useEffect(() => {
@@ -323,7 +340,8 @@ export default function ProductsPage() {
         currentPage, 
         debouncedSearchTerm,
         { field: sortField, direction: sortDirection },
-        { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter }
+        { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
+        false // forceSync = false for normal page loads
       );
     } else {
       console.log(`🔄 useEffect [${effectId}] - SKIPPED fetchProducts (conditions not met)`);
@@ -341,6 +359,42 @@ export default function ProductsPage() {
       }
     }
   }, [variantManualEdits]);
+
+  // ✅ NEW: Save auto-sync preference to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('productsAutoSync', JSON.stringify(autoSyncEnabled));
+      } catch (error) {
+        console.warn('Failed to save auto-sync preference to localStorage:', error);
+      }
+    }
+  }, [autoSyncEnabled]);
+
+  // ✅ NEW: Manual sync function for current page
+  const manualSyncCurrentPage = useCallback(async () => {
+    if (manualSyncLoading) return;
+    
+    setManualSyncLoading(true);
+    console.log('🔄 Manual sync triggered for current page');
+    
+    try {
+      // Force sync current page by calling fetchProducts with forceSync=true
+      await fetchProducts(
+        currentPage, 
+        debouncedSearchTerm,
+        { field: sortField, direction: sortDirection },
+        { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
+        true // forceSync = true
+      );
+      console.log('✅ Manual sync completed for current page');
+    } catch (error) {
+      console.error('❌ Manual sync failed:', error);
+      setError('Failed to sync current page');
+    } finally {
+      setManualSyncLoading(false);
+    }
+  }, [manualSyncLoading, currentPage, debouncedSearchTerm, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter]);
 
   // Function to fetch variant costs for a specific product
   const fetchVariantCostsForProduct = useCallback(async (productId: string) => {
@@ -733,7 +787,8 @@ export default function ProductsPage() {
             currentPage, 
             debouncedSearchTerm,
             { field: sortField, direction: sortDirection },
-            { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter }
+            { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
+            true // forceSync = true after global sync completion
           ).then(() => {
             console.log('ProductsPage - Product data refreshed after sync completion');
           });
@@ -798,6 +853,35 @@ export default function ProductsPage() {
               >
                 Filters {getActiveFilterCount > 0 && `(${getActiveFilterCount})`}
               </Button>
+              
+              {/* ✅ NEW: Auto-sync toggle */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Auto-sync:
+                </Typography>
+                <Button
+                  variant={autoSyncEnabled ? "contained" : "outlined"}
+                  size="small"
+                  onClick={() => setAutoSyncEnabled(!autoSyncEnabled)}
+                  sx={{ minWidth: 60 }}
+                >
+                  {autoSyncEnabled ? 'ON' : 'OFF'}
+                </Button>
+              </Box>
+              
+              {/* ✅ NEW: Manual sync button (only show when auto-sync is off) */}
+              {!autoSyncEnabled && (
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={manualSyncCurrentPage}
+                  disabled={manualSyncLoading}
+                  startIcon={manualSyncLoading ? <CircularProgress size={16} /> : <Refresh />}
+                  sx={{ minWidth: 120 }}
+                >
+                  {manualSyncLoading ? 'Syncing...' : 'Sync This Page'}
+                </Button>
+              )}
           
           <Typography variant="body2" color="text.secondary">
             {loading ? 'Loading...' : `Showing ${products.length} of ${totalProducts} products`}

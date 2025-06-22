@@ -143,6 +143,118 @@ async function saveVariantCostDataToDatabase(
   console.log(`Products API - Updated sync timestamps for ${productIds.length} products, saved costs for ${totalVariantCosts} variants across ${savedCount} products`);
 }
 
+async function saveProductAndVariantDataToDatabase(storeId: string, shopifyProducts: any[]) {
+  console.log(`Products API - Saving product and variant data for ${shopifyProducts.length} products to database`);
+  
+  let productsUpdated = 0;
+  let variantsCreated = 0;
+  
+  for (const product of shopifyProducts) {
+    try {
+      const productId = product.id.includes('gid://shopify/Product/') 
+        ? product.id.replace('gid://shopify/Product/', '')
+        : product.id;
+
+      // Update or create the ShopifyProduct record
+      const productData = {
+        id: productId,
+        storeId,
+        title: product.title,
+        handle: product.handle,
+        description: product.description || null,
+        productType: product.productType || null,
+        vendor: product.vendor || null,
+        tags: product.tags?.join(',') || null,
+        status: product.status?.toLowerCase() || 'active',
+        createdAt: new Date(product.createdAt || new Date()),
+        updatedAt: new Date(product.updatedAt || new Date()),
+        publishedAt: product.publishedAt ? new Date(product.publishedAt) : null,
+        images: product.images || null,
+        lastSyncedAt: new Date()
+      };
+
+      await (prisma as any).shopifyProduct.upsert({
+        where: { id: productId },
+        update: productData,
+        create: productData
+      });
+
+      // Handle variants - delete existing and create new ones
+      await (prisma as any).shopifyProductVariant.deleteMany({
+        where: { productId }
+      });
+
+      if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
+        const variantsData = product.variants.map((variant: any) => {
+          const variantId = variant.id && typeof variant.id === 'string' && variant.id.includes('gid://shopify/ProductVariant/') 
+            ? variant.id.replace('gid://shopify/ProductVariant/', '')
+            : variant.id || `fallback-${Math.random().toString(36).substring(2, 8)}`;
+          
+          return {
+            id: variantId,
+            productId,
+            title: variant.title || 'Default Title',
+            sku: variant.sku || null,
+            price: variant.price ? parseFloat(variant.price) || 0 : 0,
+            compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null,
+            costPerItem: variant.inventoryItem?.unitCost?.amount ? parseFloat(variant.inventoryItem.unitCost.amount) : null,
+            inventoryQuantity: variant.inventoryQuantity || variant.inventory_quantity || 0,
+            inventoryPolicy: variant.inventoryPolicy || null,
+            inventoryManagement: variant.inventoryManagement || null,
+            weight: variant.weight ? parseFloat(variant.weight) : null,
+            weightUnit: variant.weightUnit || null,
+            fulfillmentService: variant.fulfillmentService || null,
+            requiresShipping: variant.requiresShipping !== false,
+            taxable: variant.taxable !== false,
+            options: variant.selectedOptions || variant.options || null
+          };
+        });
+
+        if (variantsData.length > 0) {
+          await (prisma as any).shopifyProductVariant.createMany({
+            data: variantsData
+          });
+          variantsCreated += variantsData.length;
+          
+          // ✅ FIX: Update main Product table with default variant cost
+          const defaultVariantCost = variantsData[0].costPerItem;
+          if (defaultVariantCost && defaultVariantCost > 0) {
+            try {
+              await prisma.product.upsert({
+                where: { shopifyId: productId },
+                update: { 
+                  costOfGoodsSold: defaultVariantCost,
+                  costSource: 'SHOPIFY'
+                },
+                create: {
+                  shopifyId: productId,
+                  storeId: storeId,
+                  title: product.title,
+                  description: product.description || '',
+                  price: variantsData[0].price,
+                  cost: defaultVariantCost,
+                  costOfGoodsSold: defaultVariantCost,
+                  costSource: 'SHOPIFY',
+                  sku: variantsData[0].sku || ''
+                }
+              });
+              console.log(`Products API - Updated main Product ${productId} with default cost $${defaultVariantCost}`);
+            } catch (error) {
+              console.error(`Products API - Error updating main Product ${productId}:`, error);
+            }
+          }
+        }
+      }
+
+      productsUpdated++;
+    } catch (error) {
+      console.error(`Products API - Error saving product ${product.id}:`, error);
+    }
+  }
+  
+  console.log(`Products API - Successfully updated ${productsUpdated} products and created ${variantsCreated} variants`);
+}
+
 export async function GET(request: NextRequest) {
   // ✅ ADD: Request tracking to identify duplicate calls
   const requestId = Math.random().toString(36).substring(2, 8);
@@ -188,6 +300,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search') || ''
     const fetchCosts = searchParams.get('fetchCosts') === 'true'
     const fetchVariantCosts = searchParams.get('fetchVariantCosts') === 'true'
+    const forceSync = searchParams.get('forceSync') === 'true' // ✅ NEW: Force sync parameter
     
     // Sort and filter parameters
     const sortField = searchParams.get('sortField') || 'title'
@@ -202,6 +315,7 @@ export async function GET(request: NextRequest) {
       search, 
       fetchCosts, 
       fetchVariantCosts,
+      forceSync, // ✅ NEW: Log force sync parameter
       sortField, 
       sortDirection, 
       statusFilter, 
@@ -209,41 +323,128 @@ export async function GET(request: NextRequest) {
       costDataFilter 
     })
     
-    // Fetch ALL products from Shopify using efficient pagination
-    console.log(`📊 Request [${requestId}] - Fetching ALL products from Shopify with basic data`)
-    const shopifyProducts = await getAllProducts(formattedDomain, store.accessToken);
-
-    console.log(`📊 Request [${requestId}] - Total Shopify products fetched: ${shopifyProducts.length}`);
-    console.log(`📊 Request [${requestId}] - Will fetch cost data only for current page products (no cost filtering needed)`);
-
+    // ✅ PERFORMANCE: Load from database first for immediate page loading
+    console.log(`📊 Request [${requestId}] - Loading products from database first for immediate response`);
+    
     // Get existing product records and ShopifyProduct sync status
-    const existingProducts = await prisma.product.findMany({
-      where: { storeId: store.id },
-      select: { 
-        shopifyId: true, 
-        costOfGoodsSold: true, 
-        handlingFees: true, 
-        miscFees: true, 
-        costSource: true, 
-        lastEdited: true 
-      }
-    });
-
-    // Get sync status from ShopifyProduct table  
-    const shopifyProductSyncStatus = await (prisma as any).shopifyProduct.findMany({
-      where: { storeId: store.id },
-      select: { 
-        id: true, 
-        lastSyncedAt: true 
-      }
-    });
+    const [existingProducts, shopifyProductSyncStatus] = await Promise.all([
+      prisma.product.findMany({
+        where: { storeId: store.id },
+        select: { 
+          shopifyId: true, 
+          costOfGoodsSold: true, 
+          handlingFees: true, 
+          miscFees: true, 
+          costSource: true, 
+          lastEdited: true 
+        }
+      }),
+      (prisma as any).shopifyProduct.findMany({
+        where: { storeId: store.id },
+        select: { 
+          id: true, 
+          title: true,
+          handle: true,
+          status: true,
+          images: true,
+          variants: {
+            select: {
+              id: true,
+              price: true,
+              sku: true,
+              inventoryQuantity: true,
+              costPerItem: true
+            }
+          },
+          lastSyncedAt: true 
+        }
+      })
+    ]);
 
     // Create maps for quick lookup
     const existingProductsMap = new Map(existingProducts.map((p: any) => [p.shopifyId, p]));
-    const syncStatusMap = new Map(shopifyProductSyncStatus.map((p: any) => [p.id, p.lastSyncedAt]));
+    const shopifyProductsMap = new Map(shopifyProductSyncStatus.map((p: any) => [p.id, p])) as Map<string, any>;
 
-    console.log(`Products API - Found ${existingProducts.length} existing database records for products`);
-    console.log(`Products API - Found ${shopifyProductSyncStatus.length} ShopifyProduct sync records`);
+    console.log(`📊 Request [${requestId}] - Found ${existingProducts.length} existing database records for products`);
+    console.log(`📊 Request [${requestId}] - Found ${shopifyProductSyncStatus.length} ShopifyProduct records in database`);
+
+    // ✅ SMART SYNC: Only fetch from Shopify if we need fresh data or if forced
+    let shouldFetchFromShopify = forceSync;
+    
+    if (!shouldFetchFromShopify && fetchCosts) {
+      // Check if we have enough fresh data to skip Shopify API call
+      const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+      const staleProducts = shopifyProductSyncStatus.filter((p: any) => 
+        !p.lastSyncedAt || new Date(p.lastSyncedAt) < eightHoursAgo
+      );
+      
+      shouldFetchFromShopify = staleProducts.length > 0;
+      console.log(`📊 Request [${requestId}] - Stale products needing sync: ${staleProducts.length}`);
+    }
+
+    let shopifyProducts: any[] = [];
+    
+    if (shouldFetchFromShopify) {
+      // ✅ FIX: For force sync (page-level), don't fetch ALL products, use cached data and sync later
+      if (forceSync) {
+        console.log(`📊 Request [${requestId}] - Force sync requested - will sync current page products only`);
+        // Use cached database data, but transform it to Shopify API format for consistency
+        shopifyProducts = shopifyProductSyncStatus.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          handle: p.handle,
+          status: p.status,
+          images: p.images || [],
+          variants: p.variants || []
+        }));
+      } else {
+        // Full sync - fetch ALL products from Shopify using efficient pagination
+        console.log(`📊 Request [${requestId}] - Fetching fresh data from Shopify API`);
+        shopifyProducts = await getAllProducts(formattedDomain, store.accessToken);
+        console.log(`📊 Request [${requestId}] - Total Shopify products fetched: ${shopifyProducts.length}`);
+        
+        // ✅ COMPLETE FIX: Save product and variant data to database when we have fresh data
+        await saveProductAndVariantDataToDatabase(store.id, shopifyProducts);
+        
+        // ✅ REFRESH: Update our database maps with the fresh data we just saved
+        const refreshedShopifyProducts = await (prisma as any).shopifyProduct.findMany({
+          where: { storeId: store.id },
+          select: { 
+            id: true, 
+            title: true,
+            handle: true,
+            status: true,
+            images: true,
+            variants: {
+              select: {
+                id: true,
+                price: true,
+                sku: true,
+                inventoryQuantity: true,
+                costPerItem: true
+              }
+            },
+            lastSyncedAt: true 
+          }
+        });
+        
+        // Update the shopifyProductsMap with fresh data
+        shopifyProductsMap.clear();
+        refreshedShopifyProducts.forEach((p: any) => shopifyProductsMap.set(p.id, p));
+        console.log(`📊 Request [${requestId}] - Refreshed database cache with ${refreshedShopifyProducts.length} products and their variants`);
+      }
+    } else {
+      console.log(`📊 Request [${requestId}] - Using cached database data (no fresh sync needed)`);
+      // Use cached database data, but transform it to Shopify API format for consistency
+      shopifyProducts = shopifyProductSyncStatus.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        status: p.status,
+        images: p.images || [],
+        variants: p.variants || []
+      }));
+    }
 
     // Apply search filter if provided
     let filteredProducts = shopifyProducts;
@@ -290,14 +491,23 @@ export async function GET(request: NextRequest) {
         : shopifyProduct.id;
 
       // Get the main variant (first one) for pricing
-      const variant = shopifyProduct.variants[0];
-      const price = parseFloat(variant.price) || 0;
+      const variant = shopifyProduct.variants && shopifyProduct.variants.length > 0 
+        ? shopifyProduct.variants[0] 
+        : null;
+      
+      const price = variant ? parseFloat(variant.price) || 0 : 0;
+      
+      // ✅ DEBUG: Log when we encounter products without variants
+      if (!variant) {
+        console.log(`⚠️ Product ${numericId} "${shopifyProduct.title}" has no variants - using fallback price $0`);
+      }
 
       // Check for existing database record using the new map
       const existingProduct = existingProductsMap.get(numericId);
       
       // Get sync status from ShopifyProduct table
-      const lastSyncedAt = syncStatusMap.get(numericId);
+      const cachedProduct = shopifyProductsMap.get(numericId);
+      const lastSyncedAt = cachedProduct?.lastSyncedAt;
 
       // Determine cost source and values
       const costSource = existingProduct?.costSource || 'SHOPIFY';
@@ -305,17 +515,42 @@ export async function GET(request: NextRequest) {
       const handlingFees = existingProduct?.handlingFees || 0; 
       const miscFees = existingProduct?.miscFees || 0;
 
-      // Get Shopify inventory cost if available
-      const shopifyInventoryCost = needsCostDataForFiltering && allCostData ? allCostData[numericId] : null;
+      // ✅ FIX: Get Shopify inventory cost from variant data if available
+      let shopifyInventoryCost = needsCostDataForFiltering && allCostData ? allCostData[numericId] : null;
+      
+      // ✅ FIX: If we have existing Product record with SHOPIFY source, use that cost
+      if (!shopifyInventoryCost && existingProduct?.costSource === 'SHOPIFY' && existingProduct.costOfGoodsSold > 0) {
+        shopifyInventoryCost = existingProduct.costOfGoodsSold;
+        console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - using saved cost: $${shopifyInventoryCost} from Product table`);
+      }
+      
+      // If we still don't have cost data, try to get it from the first variant
+      if (!shopifyInventoryCost && cachedProduct?.variants && cachedProduct.variants.length > 0) {
+        const firstVariant = cachedProduct.variants[0];
+        shopifyInventoryCost = firstVariant?.costPerItem || null;
+        if (shopifyInventoryCost) {
+          console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - using variant cost: $${shopifyInventoryCost}`);
+        }
+      }
+      
+      // ✅ FIX: For products with SHOPIFY cost source, use the Shopify cost as the main cost
+      const displayCostOfGoodsSold = (costSource === 'SHOPIFY' && shopifyInventoryCost) 
+        ? shopifyInventoryCost 
+        : costOfGoodsSold;
 
-      const totalCost = costOfGoodsSold + handlingFees + miscFees;
+      const totalCost = displayCostOfGoodsSold + handlingFees + miscFees;
       const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
       
+      // ✅ DEBUG: Log cost data for main products to verify styling logic
+      if (shopifyInventoryCost && shopifyInventoryCost > 0) {
+        console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - cost: $${shopifyInventoryCost}, source: ${costSource}`);
+      }
+
       return {
         id: numericId,
-        title: shopifyProduct.title,
-        image: shopifyProduct.images?.[0]?.src || '',
-        status: mapShopifyStatus(shopifyProduct.status),
+        title: cachedProduct?.title || shopifyProduct.title,
+        image: cachedProduct?.images?.[0]?.src || shopifyProduct.images?.[0]?.src || '',
+        status: mapShopifyStatus(cachedProduct?.status || shopifyProduct.status),
         lastEdited: existingProduct?.lastEdited 
           ? existingProduct.lastEdited.toLocaleDateString('en-US', {
               year: 'numeric',
@@ -328,7 +563,7 @@ export async function GET(request: NextRequest) {
           day: 'numeric'
         }),
         sellingPrice: price,
-        costOfGoodsSold: costOfGoodsSold,
+        costOfGoodsSold: displayCostOfGoodsSold,
         handlingFees: handlingFees,
         miscFees: miscFees,
         margin: margin,
@@ -336,24 +571,30 @@ export async function GET(request: NextRequest) {
         shopifyCostOfGoodsSold: shopifyInventoryCost || null,
         shopifyHandlingFees: 0,
         lastSyncedAt: lastSyncedAt && lastSyncedAt instanceof Date ? lastSyncedAt.toISOString() : null,
-        sku: variant.sku || '',
-        inventoryQuantity: variant.inventory_quantity || 0,
-        variants: shopifyProduct.variants.map(v => {
+        sku: variant?.sku || '',
+        inventoryQuantity: variant?.inventory_quantity || 0,
+        variants: (cachedProduct?.variants || shopifyProduct.variants || []).map((v: any) => {
+          // ✅ SAFETY: Handle malformed variant data
+          if (!v) {
+            console.log(`⚠️ Skipping null/undefined variant for product ${numericId}`);
+            return null;
+          }
+          
           // Extract numeric variant ID from GraphQL ID format
-          const numericVariantId = v.id.includes('gid://shopify/ProductVariant/') 
+          const numericVariantId = v.id && typeof v.id === 'string' && v.id.includes('gid://shopify/ProductVariant/') 
             ? v.id.replace('gid://shopify/ProductVariant/', '')
-            : v.id;
+            : v.id || `fallback-${Math.random().toString(36).substring(2, 8)}`;
           
           return {
             id: numericVariantId,
-            price: parseFloat(v.price) || 0,
-            inventory_cost: 0, // Will be populated with variant-specific costs when needed
-            cost: v.cost_per_item !== undefined ? parseFloat(v.cost_per_item) || 0 : 0,
+            price: v.price ? parseFloat(v.price) || 0 : 0,
+            inventory_cost: v.costPerItem || v.cost_per_item || 0, // Use cached cost from database or API
+            cost: v.costPerItem || v.cost_per_item || 0,
             sku: v.sku || '',
-            inventory_quantity: v.inventory_quantity || 0,
+            inventory_quantity: v.inventory_quantity || v.inventoryQuantity || 0,
             inventory_tracked: (v as any).inventory_tracked || false
           };
-        })
+        }).filter(Boolean) // Remove any null entries
       };
     });
 
@@ -450,128 +691,135 @@ export async function GET(request: NextRequest) {
       returnedProducts: paginatedProducts.length
     });
 
-    // If we didn't fetch cost data for all products (no cost filtering), fetch it now for current page only
-    if (fetchCosts && !needsCostDataForFiltering && paginatedProducts.length > 0) {
-      console.log('Products API - Fetching cost data for current page products only');
-      const pageProductIds = paginatedProducts.map(product => 
-        product.id.includes('gid://shopify/Product/') 
-          ? product.id.replace('gid://shopify/Product/', '')
-          : product.id
-      );
+    // ✅ SMART COST SYNC: Only fetch cost data for products that need it
+    let productsNeedingSync: string[] = []; // ✅ Declare in proper scope
+    
+    if (fetchCosts && paginatedProducts.length > 0) {
+      const pageProductIds = paginatedProducts.map(product => product.id);
       
-      console.log('Products API - Fetching cost data for page product IDs:', pageProductIds);
-      const pageCostData = await getProductsCostData(store.domain, store.accessToken, pageProductIds);
+      // Determine which products need cost data refresh
+      productsNeedingSync = pageProductIds;
       
-      // ✅ NEW: Save cost data to database (unified sync approach)
-      await saveCostDataToDatabase(store.id, pageCostData, pageProductIds);
-      
-      // ✅ FIXED: Refresh sync status after saving to get updated timestamps
-      const updatedSyncStatus = await (prisma as any).shopifyProduct.findMany({
-        where: { 
-          storeId: store.id,
-          id: { in: pageProductIds }
-        },
-        select: { 
-          id: true, 
-          lastSyncedAt: true 
-        }
-      });
-      
-      // Update the syncStatusMap with fresh timestamps
-      updatedSyncStatus.forEach((syncStatus: any) => {
-        syncStatusMap.set(syncStatus.id, syncStatus.lastSyncedAt);
-      });
-      
-      console.log(`Products API - Refreshed sync timestamps for ${updatedSyncStatus.length} products`);
-      
-      // Apply cost data to current page products
-      paginatedProducts.forEach((product: any) => {
-        const numericId = product.id.includes('gid://shopify/Product/') 
-          ? product.id.replace('gid://shopify/Product/', '')
-          : product.id;
-        
-        const shopifyInventoryCost = pageCostData[numericId];
-        
-        // Update the transformed product's shopify cost data
-        product.shopifyCostOfGoodsSold = shopifyInventoryCost || null;
-        
-        // ✅ FIXED: Update lastSyncedAt with fresh timestamp from database
-        const updatedSyncTime = syncStatusMap.get(numericId);
-        product.lastSyncedAt = updatedSyncTime && updatedSyncTime instanceof Date ? updatedSyncTime.toISOString() : null;
-        
-        // If cost source is SHOPIFY, update the cost of goods sold
-        if (product.costSource === 'SHOPIFY') {
-          product.costOfGoodsSold = shopifyInventoryCost || 0;
-          const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
-          product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
-        }
-      });
-    }
+      if (!forceSync) {
+        // Filter to only products that haven't been synced recently
+        const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+        productsNeedingSync = pageProductIds.filter(productId => {
+          const shopifyProduct = shopifyProductsMap.get(productId);
+          return !shopifyProduct?.lastSyncedAt || new Date(shopifyProduct.lastSyncedAt) < eightHoursAgo;
+        });
+      }
 
-    // If variant costs are requested, fetch them for current page only
-    if (fetchVariantCosts && paginatedProducts.length > 0) {
-      console.log('Products API - Fetching variant-specific cost data for current page products');
-      const pageProductIds = paginatedProducts.map(product => 
-        product.id.includes('gid://shopify/Product/') 
-          ? product.id.replace('gid://shopify/Product/', '')
-          : product.id
-      );
-      
-      const variantCostData = await getProductsVariantCostData(store.domain, store.accessToken, pageProductIds);
-      
-      // ✅ NEW: Save variant cost data to database (unified sync approach)
-      await saveVariantCostDataToDatabase(store.id, variantCostData, pageProductIds);
-      
-      // ✅ FIXED: Refresh sync status after saving variant costs to get updated timestamps
-      const updatedSyncStatus = await (prisma as any).shopifyProduct.findMany({
-        where: { 
-          storeId: store.id,
-          id: { in: pageProductIds }
-        },
-        select: { 
-          id: true, 
-          lastSyncedAt: true 
+      if (productsNeedingSync.length > 0) {
+        console.log(`Products API - Syncing cost data for ${productsNeedingSync.length} products (${pageProductIds.length - productsNeedingSync.length} already fresh)`);
+        
+        const pageCostData = await getProductsCostData(store.domain, store.accessToken, productsNeedingSync);
+        
+        // Save cost data to database
+        await saveCostDataToDatabase(store.id, pageCostData, productsNeedingSync);
+        
+        // ✅ FIX: For page sync, also update main Product table with variant costs
+        if (forceSync) {
+          console.log(`Products API - Updating main Product table for ${productsNeedingSync.length} products with variant costs`);
+          for (const productId of productsNeedingSync) {
+            const shopifyProduct = shopifyProductsMap.get(productId);
+            if (shopifyProduct?.variants && shopifyProduct.variants.length > 0) {
+              const firstVariant = shopifyProduct.variants[0];
+              const variantCost = firstVariant?.costPerItem || pageCostData[productId];
+              
+              if (variantCost && variantCost > 0) {
+                try {
+                  await prisma.product.upsert({
+                    where: { shopifyId: productId },
+                    update: { 
+                      costOfGoodsSold: variantCost,
+                      costSource: 'SHOPIFY'
+                    },
+                    create: {
+                      shopifyId: productId,
+                      storeId: store.id,
+                      title: shopifyProduct.title || `Product ${productId}`,
+                      description: '',
+                      price: firstVariant?.price || 0,
+                      cost: variantCost,
+                      costOfGoodsSold: variantCost,
+                      costSource: 'SHOPIFY',
+                      sku: firstVariant?.sku || ''
+                    }
+                  });
+                  console.log(`Products API - Updated main Product ${productId} with variant cost $${variantCost}`);
+                } catch (error) {
+                  console.error(`Products API - Error updating main Product ${productId}:`, error);
+                }
+              }
+            }
+          }
         }
-      });
-      
-      // Update the syncStatusMap with fresh timestamps
-      updatedSyncStatus.forEach((syncStatus: any) => {
-        syncStatusMap.set(syncStatus.id, syncStatus.lastSyncedAt);
-      });
-      
-      console.log(`Products API - Refreshed sync timestamps for variant costs on ${updatedSyncStatus.length} products`);
-      
-      // Apply variant cost data to current page products
-      paginatedProducts.forEach((product: any) => {
-        const numericId = product.id.includes('gid://shopify/Product/') 
-          ? product.id.replace('gid://shopify/Product/', '')
-          : product.id;
         
-        const productVariantCosts = variantCostData[numericId] || {};
-        
-        // ✅ FIXED: Update lastSyncedAt with fresh timestamp from database
-        const updatedSyncTime = syncStatusMap.get(numericId);
-        product.lastSyncedAt = updatedSyncTime && updatedSyncTime instanceof Date ? updatedSyncTime.toISOString() : null;
-        
-        // Update each variant with its specific cost
-        product.variants.forEach((variant: any) => {
-          const variantCost = productVariantCosts[variant.id];
-          if (variantCost !== undefined) {
-            variant.inventory_cost = variantCost;
-            variant.cost = variantCost;
+        // Refresh sync status after saving to get updated timestamps
+        const updatedSyncStatus = await (prisma as any).shopifyProduct.findMany({
+          where: { 
+            storeId: store.id,
+            id: { in: productsNeedingSync }
+          },
+          select: { 
+            id: true, 
+            lastSyncedAt: true 
           }
         });
-      });
+        
+        // Update the shopifyProductsMap with fresh timestamps
+        updatedSyncStatus.forEach((syncStatus: any) => {
+          const existing = shopifyProductsMap.get(syncStatus.id);
+          if (existing) {
+            existing.lastSyncedAt = syncStatus.lastSyncedAt;
+          }
+        });
+        
+        console.log(`Products API - Refreshed sync timestamps for ${updatedSyncStatus.length} products`);
+        
+        // Apply cost data to current page products
+        paginatedProducts.forEach((product: any) => {
+          const shopifyInventoryCost = pageCostData[product.id];
+          
+          // Update the transformed product's shopify cost data
+          product.shopifyCostOfGoodsSold = shopifyInventoryCost || null;
+          
+          // Update lastSyncedAt with fresh timestamp from database
+          const shopifyProduct = shopifyProductsMap.get(product.id);
+          product.lastSyncedAt = shopifyProduct?.lastSyncedAt instanceof Date ? shopifyProduct.lastSyncedAt.toISOString() : null;
+          
+          // If cost source is SHOPIFY, update the cost of goods sold
+          if (product.costSource === 'SHOPIFY') {
+            product.costOfGoodsSold = shopifyInventoryCost || 0;
+            const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
+            product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+          }
+        });
+      } else {
+        console.log(`Products API - All ${pageProductIds.length} products already have fresh cost data`);
+      }
     }
 
     console.log('Products API - Successfully transformed products')
+    
+    // ✅ DEBUG: Log sync timestamps being returned to frontend
+    console.log(`🔍 API Response Debug - Products with sync timestamps:`);
+    paginatedProducts.forEach((product: any, index: number) => {
+      if (product.lastSyncedAt) {
+        console.log(`  ${index + 1}. "${product.title}" - lastSyncedAt: ${product.lastSyncedAt}`);
+      } else {
+        console.log(`  ${index + 1}. "${product.title}" - lastSyncedAt: NULL`);
+      }
+    });
     
     const requestEnd = Date.now();
     const duration = requestEnd - requestStart;
     console.log(`✅ Request [${requestId}] - COMPLETED in ${duration}ms
       - Products returned: ${paginatedProducts.length}
       - Total products: ${totalProducts}
-      - Page: ${page}/${totalPages}`);
+      - Page: ${page}/${totalPages}
+      - Used database cache: ${!shouldFetchFromShopify}
+      - Products synced: ${fetchCosts ? (productsNeedingSync?.length || 0) : 0}`);
     
     return NextResponse.json({ 
       products: paginatedProducts,
@@ -594,4 +842,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

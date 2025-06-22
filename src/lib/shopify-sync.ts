@@ -467,9 +467,8 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
             where: { productId }
           })
 
-          if (product.variants?.edges) {
-            const variantsData = product.variants.edges.map((edge: any) => {
-              const variant = edge.node
+          if (product.variants && Array.isArray(product.variants)) {
+            const variantsData = product.variants.map((variant: any) => {
               return {
                 id: variant.id.replace('gid://shopify/ProductVariant/', ''),
                 productId,
