@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET - Fetch fee configuration for a store
 export async function GET(request: NextRequest) {
@@ -13,35 +11,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Find existing fee configuration or create default one
-    let feeConfig = await (prisma as any).feeConfiguration.findUnique({
+    let feeConfiguration = await prisma.feeConfiguration.findUnique({
       where: { storeId }
     });
 
-    if (!feeConfig) {
-      // Create default fee configuration
-      feeConfig = await (prisma as any).feeConfiguration.create({
+    // Create default configuration if none exists
+    if (!feeConfiguration) {
+      console.log('📊 Creating default fee configuration for store:', storeId);
+      
+      feeConfiguration = await prisma.feeConfiguration.create({
         data: {
           storeId,
-          paymentGatewayRate: 0.029,
-          processingFeePerOrder: 0.30,
-          defaultCogRate: 0.40,
-          overheadCostRate: 0.00,
+          paymentGatewayRate: 0.029,     // 2.9%
+          processingFeePerOrder: 0.30,   // $0.30
+          defaultCogRate: 0.30,          // 30%
+          chargebackRate: 0.006,         // 0.6%
+          returnProcessingRate: 0.005,   // 0.5%
           overheadCostPerOrder: 0.00,
           overheadCostPerItem: 0.00,
-          miscCostRate: 0.00,
           miscCostPerOrder: 0.00,
           miscCostPerItem: 0.00,
-          chargebackRate: 0.001,
-          returnRate: 0.05,
+          usePaymentMethodFees: false,   // Default to basic mode
         }
       });
+      console.log('✅ Created default fee configuration');
     }
 
-    return NextResponse.json(feeConfig);
+    return NextResponse.json({ feeConfiguration });
   } catch (error) {
     console.error('Error fetching fee configuration:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch fee configuration' }, { status: 500 });
   }
 }
 
@@ -54,59 +53,93 @@ export async function PUT(request: NextRequest) {
       paymentGatewayRate, 
       processingFeePerOrder, 
       defaultCogRate,
-      overheadCostRate,
+      chargebackRate,
+      returnProcessingRate,
       overheadCostPerOrder,
       overheadCostPerItem,
-      miscCostRate,
       miscCostPerOrder,
       miscCostPerItem,
-      chargebackRate,
-      returnRate
+      usePaymentMethodFees  // NEW: Toggle for payment method-specific fees
     } = body;
 
     if (!storeId) {
       return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Validate rates are numbers and within reasonable ranges
-    const rates = {
-      paymentGatewayRate: parseFloat(paymentGatewayRate),
-      processingFeePerOrder: parseFloat(processingFeePerOrder),
-      defaultCogRate: parseFloat(defaultCogRate),
-      overheadCostRate: parseFloat(overheadCostRate),
-      overheadCostPerOrder: parseFloat(overheadCostPerOrder),
-      overheadCostPerItem: parseFloat(overheadCostPerItem),
-      miscCostRate: parseFloat(miscCostRate),
-      miscCostPerOrder: parseFloat(miscCostPerOrder),
-      miscCostPerItem: parseFloat(miscCostPerItem),
-      chargebackRate: parseFloat(chargebackRate),
-      returnRate: parseFloat(returnRate),
-    };
+    // Validate rates (0-100% for percentages)
+    const percentageFields = [
+      { name: 'paymentGatewayRate', value: paymentGatewayRate },
+      { name: 'defaultCogRate', value: defaultCogRate },
+      { name: 'chargebackRate', value: chargebackRate },
+      { name: 'returnProcessingRate', value: returnProcessingRate }
+    ];
 
-    // Basic validation
-    for (const [key, value] of Object.entries(rates)) {
-      if (isNaN(value) || value < 0) {
-        return NextResponse.json({ error: `Invalid ${key}: must be a positive number` }, { status: 400 });
-      }
-      if (key.includes('Rate') && key !== 'processingFeePerOrder' && value > 1) {
-        return NextResponse.json({ error: `Invalid ${key}: rate cannot exceed 100%` }, { status: 400 });
+    for (const field of percentageFields) {
+      if (field.value !== undefined && (field.value < 0 || field.value > 1)) {
+        return NextResponse.json({ 
+          error: `${field.name} must be between 0 and 1 (0% to 100%)` 
+        }, { status: 400 });
       }
     }
 
-    // Upsert fee configuration
-    const feeConfig = await (prisma as any).feeConfiguration.upsert({
+    // Validate fixed fees (non-negative)
+    const fixedFeeFields = [
+      { name: 'processingFeePerOrder', value: processingFeePerOrder },
+      { name: 'overheadCostPerOrder', value: overheadCostPerOrder },
+      { name: 'overheadCostPerItem', value: overheadCostPerItem },
+      { name: 'miscCostPerOrder', value: miscCostPerOrder },
+      { name: 'miscCostPerItem', value: miscCostPerItem }
+    ];
+
+    for (const field of fixedFeeFields) {
+      if (field.value !== undefined && field.value < 0) {
+        return NextResponse.json({ 
+          error: `${field.name} must be non-negative` 
+        }, { status: 400 });
+      }
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (paymentGatewayRate !== undefined) updateData.paymentGatewayRate = parseFloat(paymentGatewayRate);
+    if (processingFeePerOrder !== undefined) updateData.processingFeePerOrder = parseFloat(processingFeePerOrder);
+    if (defaultCogRate !== undefined) updateData.defaultCogRate = parseFloat(defaultCogRate);
+    if (chargebackRate !== undefined) updateData.chargebackRate = parseFloat(chargebackRate);
+    if (returnProcessingRate !== undefined) updateData.returnProcessingRate = parseFloat(returnProcessingRate);
+    if (overheadCostPerOrder !== undefined) updateData.overheadCostPerOrder = parseFloat(overheadCostPerOrder);
+    if (overheadCostPerItem !== undefined) updateData.overheadCostPerItem = parseFloat(overheadCostPerItem);
+    if (miscCostPerOrder !== undefined) updateData.miscCostPerOrder = parseFloat(miscCostPerOrder);
+    if (miscCostPerItem !== undefined) updateData.miscCostPerItem = parseFloat(miscCostPerItem);
+    if (usePaymentMethodFees !== undefined) updateData.usePaymentMethodFees = Boolean(usePaymentMethodFees);
+
+    const feeConfiguration = await prisma.feeConfiguration.upsert({
       where: { storeId },
-      update: rates,
       create: {
         storeId,
-        ...rates
-      }
+        paymentGatewayRate: parseFloat(paymentGatewayRate || '0.029'),
+        processingFeePerOrder: parseFloat(processingFeePerOrder || '0.30'),
+        defaultCogRate: parseFloat(defaultCogRate || '0.30'),
+        chargebackRate: parseFloat(chargebackRate || '0.006'),
+        returnProcessingRate: parseFloat(returnProcessingRate || '0.005'),
+        overheadCostPerOrder: parseFloat(overheadCostPerOrder || '0.00'),
+        overheadCostPerItem: parseFloat(overheadCostPerItem || '0.00'),
+        miscCostPerOrder: parseFloat(miscCostPerOrder || '0.00'),
+        miscCostPerItem: parseFloat(miscCostPerItem || '0.00'),
+        usePaymentMethodFees: Boolean(usePaymentMethodFees || false),
+      },
+      update: updateData
     });
 
-    return NextResponse.json(feeConfig);
+    console.log('✅ Updated fee configuration:', {
+      storeId,
+      usePaymentMethodFees: feeConfiguration.usePaymentMethodFees,
+      paymentGatewayRate: feeConfiguration.paymentGatewayRate
+    });
+
+    return NextResponse.json({ feeConfiguration });
   } catch (error) {
     console.error('Error updating fee configuration:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to update fee configuration' }, { status: 500 });
   }
 }
 
@@ -114,47 +147,44 @@ export async function PUT(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { storeId } = body;
+    const { 
+      storeId, 
+      paymentGatewayRate = 0.029,
+      processingFeePerOrder = 0.30,
+      defaultCogRate = 0.30,
+      chargebackRate = 0.006,
+      returnProcessingRate = 0.005,
+      overheadCostPerOrder = 0.00,
+      overheadCostPerItem = 0.00,
+      miscCostPerOrder = 0.00,
+      miscCostPerItem = 0.00,
+      usePaymentMethodFees = false
+    } = body;
 
     if (!storeId) {
       return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
     }
 
-    // Create or reset to default configuration
-    const feeConfig = await (prisma as any).feeConfiguration.upsert({
-      where: { storeId },
-      update: {
-        paymentGatewayRate: 0.029,
-        processingFeePerOrder: 0.30,
-        defaultCogRate: 0.40,
-        overheadCostRate: 0.00,
-        overheadCostPerOrder: 0.00,
-        overheadCostPerItem: 0.00,
-        miscCostRate: 0.00,
-        miscCostPerOrder: 0.00,
-        miscCostPerItem: 0.00,
-        chargebackRate: 0.001,
-        returnRate: 0.05,
-      },
-      create: {
+    const feeConfiguration = await prisma.feeConfiguration.create({
+      data: {
         storeId,
-        paymentGatewayRate: 0.029,
-        processingFeePerOrder: 0.30,
-        defaultCogRate: 0.40,
-        overheadCostRate: 0.00,
-        overheadCostPerOrder: 0.00,
-        overheadCostPerItem: 0.00,
-        miscCostRate: 0.00,
-        miscCostPerOrder: 0.00,
-        miscCostPerItem: 0.00,
-        chargebackRate: 0.001,
-        returnRate: 0.05,
+        paymentGatewayRate: parseFloat(paymentGatewayRate),
+        processingFeePerOrder: parseFloat(processingFeePerOrder),
+        defaultCogRate: parseFloat(defaultCogRate),
+        chargebackRate: parseFloat(chargebackRate),
+        returnProcessingRate: parseFloat(returnProcessingRate),
+        overheadCostPerOrder: parseFloat(overheadCostPerOrder),
+        overheadCostPerItem: parseFloat(overheadCostPerItem),
+        miscCostPerOrder: parseFloat(miscCostPerOrder),
+        miscCostPerItem: parseFloat(miscCostPerItem),
+        usePaymentMethodFees: Boolean(usePaymentMethodFees),
       }
     });
 
-    return NextResponse.json(feeConfig);
+    console.log('✅ Created fee configuration:', feeConfiguration);
+    return NextResponse.json({ feeConfiguration });
   } catch (error) {
-    console.error('Error creating/resetting fee configuration:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('Error creating fee configuration:', error);
+    return NextResponse.json({ error: 'Failed to create fee configuration' }, { status: 500 });
   }
 } 

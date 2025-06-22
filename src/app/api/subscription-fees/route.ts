@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' }
     });
 
-    return NextResponse.json(subscriptionFees);
+    return NextResponse.json({ subscriptionFees });
   } catch (error) {
     console.error('Error fetching subscription fees:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' }
     });
 
-    return NextResponse.json(additionalCosts);
+    return NextResponse.json({ additionalCosts });
   } catch (error) {
     console.error('Error fetching additional costs:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

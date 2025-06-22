@@ -4,177 +4,130 @@ import { prisma } from '@/lib/prisma'
 import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
-interface SyncResult {
+export interface SyncResult {
   success: boolean
-  dataType: string
-  recordsProcessed: number
-  newRecords: number
-  updatedRecords: number
-  errors: string[]
+  message: string
+  ordersProcessed: number
+  newOrders: number
+  updatedOrders: number
+}
+
+// Helper function to detect payment method from order data
+function detectPaymentMethod(order: any): {
+  paymentGateway: string | null;
+  paymentSource: string | null;
+  paymentMethod: string | null;
+  transactionGateway: string | null;
+} {
+  // Get payment gateway from payment_gateway_names array
+  const paymentGateway = order.payment_gateway_names?.[0] || order.gateway || null;
+  
+  // Get source (web, pos, mobile, etc.)
+  const paymentSource = order.source_name || null;
+  
+  // Get transaction gateway if transactions exist
+  let transactionGateway = null;
+  if (order.transactions && order.transactions.length > 0) {
+    // Get the gateway from the first successful transaction
+    const successfulTransaction = order.transactions.find((tx: any) => 
+      tx.status === 'success' && (tx.kind === 'sale' || tx.kind === 'authorization')
+    );
+    transactionGateway = successfulTransaction?.gateway || null;
+  }
+  
+  // Create composite payment method identifier
+  let paymentMethod = null;
+  if (paymentGateway && paymentSource) {
+    paymentMethod = `${paymentGateway}_${paymentSource}`;
+  } else if (paymentGateway) {
+    paymentMethod = `${paymentGateway}_unknown`;
+  }
+  
+  return {
+    paymentGateway,
+    paymentSource,
+    paymentMethod,
+    transactionGateway
+  };
 }
 
 export async function syncShopifyOrders(storeId: string, timeframeDays: number = 30): Promise<SyncResult> {
-  console.log(`Sync Service - Starting INCREMENTAL orders sync for store: ${storeId}`)
+  console.log(`📦 Starting Shopify order sync for store ${storeId} (${timeframeDays} days)`)
   
   const result: SyncResult = {
     success: false,
-    dataType: 'orders',
-    recordsProcessed: 0,
-    newRecords: 0,
-    updatedRecords: 0,
-    errors: []
+    message: '',
+    ordersProcessed: 0,
+    newOrders: 0,
+    updatedOrders: 0
   }
 
   try {
-    // Get store info
+    // Get store information
     const store = await prisma.store.findUnique({
       where: { id: storeId },
       select: { id: true, domain: true, accessToken: true }
     })
 
     if (!store) {
-      result.errors.push('Store not found')
+      throw new Error(`Store not found: ${storeId}`)
+    }
+
+    console.log(`🏪 Found store: ${store.domain}`)
+
+    // Fetch orders from Shopify with enhanced fields including payment method data
+    console.log(`📡 Fetching orders from Shopify for last ${timeframeDays} days...`)
+    const shopifyOrders = await getAllOrders(store.domain, store.accessToken, timeframeDays)
+    
+    console.log(`📊 Retrieved ${shopifyOrders.length} orders from Shopify`)
+
+    if (shopifyOrders.length === 0) {
       return result
     }
 
-    // Get or create sync status
-    let syncStatus = await prisma.syncStatus.findUnique({
-      where: {
-        storeId_dataType: {
-          storeId,
-          dataType: 'orders'
-        }
-      }
-    })
-
-    if (!syncStatus) {
-      // First time sync - create sync status
-      syncStatus = await prisma.syncStatus.create({
-        data: {
-          storeId,
-          dataType: 'orders',
-          lastSyncAt: new Date('2023-01-01'), // Start from a reasonable date
-          totalRecords: 0
-        }
-      })
-    }
-
-    // Check if sync is already in progress
-    if (syncStatus.syncInProgress) {
-      // If sync is already running for a different timeframe, use the stored timeframe
-      if (syncStatus.timeframeDays && syncStatus.timeframeDays !== timeframeDays) {
-        console.log(`Sync Service - Using stored timeframe ${syncStatus.timeframeDays} days instead of requested ${timeframeDays} days`)
-        timeframeDays = syncStatus.timeframeDays
-      } else {
-        result.errors.push('Sync already in progress')
-        return result
-      }
-    }
-
-    // Mark sync as in progress and update heartbeat
-    await prisma.syncStatus.update({
-      where: { id: syncStatus.id },
-      data: { 
-        syncInProgress: true, 
-        errorMessage: null,
-        lastHeartbeat: new Date(),
-        timeframeDays: timeframeDays // Store the timeframe this sync is running for
-      }
-    })
-
-    // **SMART INCREMENTAL SYNC**
-    // Instead of fetching ALL orders, first check what we're missing
-    const formattedDomain = formatShopDomain(store.domain)
-    
-    // Calculate the date filter for the timeframe
-    const timeframeStartDate = new Date(Date.now() - timeframeDays * 24 * 60 * 60 * 1000)
-    
-    // Step 1: Get total order count from Shopify (fast API call)
-    const totalOrdersInShopify = await getOrdersCount(formattedDomain, store.accessToken, {
-      created_at_min: timeframeStartDate.toISOString(),
-      status: 'any'
-    })
-    
-    // Step 2: Get count of orders we already have locally FOR THE SAME TIMEFRAME
-    const localOrdersCount = await prisma.shopifyOrder.count({
-      where: { 
-        storeId,
-        createdAt: {
-          gte: timeframeStartDate
-        }
-      }
-    })
-    
-    console.log(`Sync Service - Shopify has ${totalOrdersInShopify} orders (${timeframeDays}d), we have ${localOrdersCount} locally (${timeframeDays}d)`)
-    
-    // If we have all orders, skip the sync
-    if (localOrdersCount >= totalOrdersInShopify) {
-      console.log('Sync Service - All orders already synced!')
-      await prisma.syncStatus.update({
-        where: { id: syncStatus.id },
-        data: { 
-          syncInProgress: false,
-          lastHeartbeat: null,
-          lastSyncAt: new Date()
-        }
-      })
-      result.success = true
-      return result
-    }
-    
-    // Step 3: Get existing order IDs to avoid refetching (within timeframe)
-    const existingOrderIds = await prisma.shopifyOrder.findMany({
-      where: { 
-        storeId,
-        createdAt: {
-          gte: timeframeStartDate
-        }
-      },
-      select: { id: true }
-    })
-    const existingOrderIdSet = new Set(existingOrderIds.map(o => o.id))
-    
-    console.log(`Sync Service - Need to fetch ${totalOrdersInShopify - localOrdersCount} missing orders`)
-
-    // Step 4: Fetch ALL orders for the specified timeframe (we'll filter out existing ones)
-    const shopifyOrders = await getAllOrders(formattedDomain, store.accessToken, timeframeDays)
-    
-    // Update heartbeat
-    await prisma.syncStatus.update({
-      where: { id: syncStatus.id },
-      data: { lastHeartbeat: new Date() }
-    })
-
-    // Step 5: Filter to only orders we don't have yet
-    const newOrders = shopifyOrders.filter(order => 
-      !existingOrderIdSet.has(order.id.toString())
+    // Get existing orders from database
+    const existingOrderIds = new Set(
+      (await prisma.shopifyOrder.findMany({
+        where: { storeId },
+        select: { id: true }
+      })).map(order => order.id)
     )
 
-    console.log(`Sync Service - Processing ${newOrders.length} truly NEW orders (was ${shopifyOrders.length} total)`)
+    console.log(`🗄️ Found ${existingOrderIds.size} existing orders in database`)
 
     // Process orders in batches
-    const batchSize = 100
-    let latestOrderDate = syncStatus.lastSyncAt
+    const batchSize = 50
+    const newOrders = shopifyOrders.filter(order => !existingOrderIds.has(order.id.toString()))
+    const existingOrders = shopifyOrders.filter(order => existingOrderIds.has(order.id.toString()))
+    
+    console.log(`📋 Processing ${newOrders.length} new orders and ${existingOrders.length} existing orders`)
 
-    for (let i = 0; i < newOrders.length; i += batchSize) {
-      const batch = newOrders.slice(i, i + batchSize)
-      
-      // Update heartbeat every batch
-      await prisma.syncStatus.update({
-        where: { id: syncStatus.id },
-        data: { lastHeartbeat: new Date() }
-      })
-      
-      for (const order of batch) {
-        try {
-          const orderDate = new Date(order.updated_at)
-          if (orderDate > latestOrderDate) {
-            latestOrderDate = orderDate
-          }
+    let newOrdersCount = 0
+    let updatedOrdersCount = 0
 
-          // Fetch refunds for this order - ALWAYS fetch, regardless of status
-          console.log(`Sync Service - Fetching refunds for order ${order.id} (status: ${order.financial_status})`);
-          const totalRefunds = await getOrderRefunds(formattedDomain, store.accessToken, order.id.toString());
+    // Process new orders
+    if (newOrders.length > 0) {
+      console.log(`➕ Processing ${newOrders.length} new orders...`)
+      
+      for (let i = 0; i < newOrders.length; i += batchSize) {
+        const batch = newOrders.slice(i, i + batchSize)
+        console.log(`📦 Processing new orders batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(newOrders.length / batchSize)} (${batch.length} orders)`)
+
+        // Fetch refunds for each order in the batch
+        const ordersWithRefunds = []
+        
+        for (const order of batch) {
+          console.log(`💸 Fetching refunds for order ${order.name}...`)
+          const totalRefunds = await getOrderRefunds(store.domain, store.accessToken, order.id.toString())
+          
+          // Detect payment method information
+          const paymentMethodData = detectPaymentMethod(order);
+          
+          console.log(`💳 Payment method detected for ${order.name}:`, {
+            gateway: paymentMethodData.paymentGateway,
+            source: paymentMethodData.paymentSource,
+            method: paymentMethodData.paymentMethod
+          });
 
           const orderData = {
             id: order.id.toString(),
@@ -207,81 +160,111 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
             shippingZip: order.shipping_address?.zip,
             gateway: order.gateway,
             processingMethod: order.processing_method,
+            // NEW: Enhanced payment method tracking
+            paymentGateway: paymentMethodData.paymentGateway,
+            paymentSource: paymentMethodData.paymentSource,
+            paymentMethod: paymentMethodData.paymentMethod,
+            transactionGateway: paymentMethodData.transactionGateway,
             tags: order.tags,
             note: order.note,
             lastSyncedAt: new Date()
           }
 
-          await prisma.shopifyOrder.upsert({
-            where: { id: order.id.toString() },
-            update: {
-              ...orderData,
-              // Always update refunds data on upsert to catch any new refunds
-              totalRefunds: totalRefunds,
-              updatedAt: new Date(order.updated_at)
-            },
-            create: orderData,
-          })
+          ordersWithRefunds.push(orderData)
+        }
 
-          // Process line items
-          if (order.line_items && order.line_items.length > 0) {
-            for (const lineItem of order.line_items) {
-              const lineItemData = {
-                id: lineItem.id.toString(),
-                orderId: order.id.toString(),
-                storeId,
-                productId: lineItem.product_id?.toString() || null,
-                variantId: lineItem.variant_id?.toString() || null,
-                title: lineItem.title,
-                quantity: lineItem.quantity,
-                price: parseFloat(lineItem.price || '0'),
-                totalDiscount: parseFloat(lineItem.total_discount || '0'),
-                sku: lineItem.sku || null,
-              }
+        // Batch insert new orders
+        await prisma.shopifyOrder.createMany({
+          data: ordersWithRefunds,
+          skipDuplicates: true
+        })
 
-              await prisma.shopifyLineItem.upsert({
-                where: { id: lineItem.id.toString() },
-                update: lineItemData,
-                create: lineItemData,
-              })
-            }
+        newOrdersCount += ordersWithRefunds.length
+        console.log(`✅ Created ${ordersWithRefunds.length} new orders in batch`)
+
+        // Process line items for the batch
+        for (const order of batch) {
+          const lineItemsData = order.line_items?.map((item: any) => ({
+            id: item.id.toString(),
+            orderId: order.id.toString(),
+            productId: item.product_id?.toString() || null,
+            variantId: item.variant_id?.toString() || null,
+            title: item.title || 'Unknown Product',
+            quantity: item.quantity || 0,
+            price: parseFloat(item.price || '0'),
+            totalDiscount: parseFloat(item.total_discount || '0'),
+            vendor: item.vendor || null,
+            sku: item.sku || null,
+            fulfillmentStatus: item.fulfillment_status || 'unfulfilled',
+          })) || []
+
+          if (lineItemsData.length > 0) {
+            await prisma.shopifyLineItem.createMany({
+              data: lineItemsData,
+              skipDuplicates: true
+            })
           }
+        }
 
-          result.newRecords++
-          
-          // Log progress with refunds info
-          if (totalRefunds > 0) {
-            console.log(`Sync Service - Order ${order.name} synced with $${totalRefunds.toFixed(2)} in refunds`);
-          }
-          
-        } catch (error) {
-          console.error(`Sync Service - Error processing order ${order.id}:`, error)
-          result.errors.push(`Order ${order.id}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        // Small delay to be respectful to the API
+        if (i + batchSize < newOrders.length) {
+          await new Promise(resolve => setTimeout(resolve, 100))
         }
       }
-
-      console.log(`Sync Service - Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(newOrders.length / batchSize)} (${result.newRecords} new orders so far)`)
     }
 
-    // Update sync status
-    await prisma.syncStatus.update({
-      where: { id: syncStatus.id },
-      data: {
-        lastSyncAt: latestOrderDate,
-        syncInProgress: false,
-        lastHeartbeat: null,
-        totalRecords: syncStatus.totalRecords + result.newRecords,
-        errorMessage: result.errors.length > 0 ? result.errors.join('; ') : null
+    // Process existing orders (for refunds updates and payment method backfill)
+    if (existingOrders.length > 0) {
+      console.log(`🔄 Processing ${existingOrders.length} existing orders for updates...`)
+      
+      for (const order of existingOrders) {
+        try {
+          console.log(`💸 Updating refunds for existing order ${order.name}...`)
+          const totalRefunds = await getOrderRefunds(store.domain, store.accessToken, order.id.toString())
+          
+          // Detect payment method information for backfill
+          const paymentMethodData = detectPaymentMethod(order);
+          
+          await prisma.shopifyOrder.update({
+            where: { id: order.id.toString() },
+            data: {
+              totalRefunds,
+              // Update payment method data if missing
+              paymentGateway: paymentMethodData.paymentGateway,
+              paymentSource: paymentMethodData.paymentSource,
+              paymentMethod: paymentMethodData.paymentMethod,
+              transactionGateway: paymentMethodData.transactionGateway,
+              lastSyncedAt: new Date()
+            }
+          })
+          
+          updatedOrdersCount++
+          
+          // Small delay between updates
+          await new Promise(resolve => setTimeout(resolve, 50))
+        } catch (error) {
+          console.error(`Error updating order ${order.name}:`, error)
+          // Continue with next order
+        }
       }
-    })
+    }
+
+    const totalProcessed = newOrdersCount + updatedOrdersCount
+
+    console.log(`✅ Sync completed successfully:`)
+    console.log(`   📊 Total orders processed: ${totalProcessed}`)
+    console.log(`   ➕ New orders: ${newOrdersCount}`)
+    console.log(`   🔄 Updated orders: ${updatedOrdersCount}`)
 
     result.success = true
-    console.log(`Sync Service - INCREMENTAL orders sync completed. NEW: ${result.newRecords}, Errors: ${result.errors.length}`)
-    console.log(`Sync Service - Database now has ${localOrdersCount + result.newRecords}/${totalOrdersInShopify} orders`)
+    result.ordersProcessed = totalProcessed
+    result.newOrders = newOrdersCount
+    result.updatedOrders = updatedOrdersCount
+    result.message = `Successfully synced ${totalProcessed} orders (${newOrdersCount} new, ${updatedOrdersCount} updated)`
 
   } catch (error) {
-    console.error('Sync Service - Orders sync failed:', error)
-    result.errors.push(`Sync failed: ${error}`)
+    console.error('❌ Error during order sync:', error)
+    result.message = `Sync failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
     
     // Mark sync as not in progress even if it failed
     try {
@@ -306,11 +289,10 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
   
   const result: SyncResult = {
     success: false,
-    dataType: 'products',
-    recordsProcessed: 0,
-    newRecords: 0,
-    updatedRecords: 0,
-    errors: []
+    message: '',
+    ordersProcessed: 0,
+    newOrders: 0,
+    updatedOrders: 0
   }
 
   try {
@@ -321,7 +303,7 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
     })
 
     if (!store) {
-      result.errors.push('Store not found')
+      result.message = 'Store not found'
       return result
     }
 
@@ -347,7 +329,7 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
     }
 
     if (syncStatus.syncInProgress) {
-      result.errors.push('Sync already in progress')
+      result.message = 'Sync already in progress'
       return result
     }
 
@@ -405,12 +387,12 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
               where: { id: productId },
               data: productData
             })
-            result.updatedRecords++
+            result.updatedOrders++
           } else {
             await prisma.shopifyProduct.create({
               data: productData
             })
-            result.newRecords++
+            result.newOrders++
           }
 
           // Handle variants
@@ -448,10 +430,10 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
             }
           }
 
-          result.recordsProcessed++
+          result.ordersProcessed++
         } catch (error) {
           console.error(`Sync Service - Error processing product ${product.id}:`, error)
-          result.errors.push(`Product ${product.id}: ${error}`)
+          result.message = `Product ${product.id}: ${error}`
         }
       }
 
@@ -464,17 +446,17 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
       data: {
         lastSyncAt: latestProductDate,
         syncInProgress: false,
-        totalRecords: syncStatus.totalRecords + result.newRecords,
-        errorMessage: result.errors.length > 0 ? result.errors.join('; ') : null
+        totalRecords: syncStatus.totalRecords + result.newOrders,
+        errorMessage: result.message.length > 0 ? result.message : null
       }
     })
 
     result.success = true
-    console.log(`Sync Service - Products sync completed. New: ${result.newRecords}, Updated: ${result.updatedRecords}, Errors: ${result.errors.length}`)
+    console.log(`Sync Service - Products sync completed. New: ${result.newOrders}, Updated: ${result.updatedOrders}, Errors: ${result.message.length}`)
 
   } catch (error) {
     console.error('Sync Service - Products sync failed:', error)
-    result.errors.push(`Sync failed: ${error}`)
+    result.message = `Sync failed: ${error}`
     
     try {
       await prisma.syncStatus.updateMany({
@@ -498,8 +480,8 @@ export async function syncAllData(storeId: string, timeframeDays: number = 30) {
   }
   
   console.log('Sync Service - Full sync completed:', {
-    orders: `${results.orders.newRecords} new, ${results.orders.updatedRecords} updated`,
-    products: `${results.products.newRecords} new, ${results.products.updatedRecords} updated`
+    orders: `${results.orders.newOrders} new, ${results.orders.updatedOrders} updated`,
+    products: `${results.products.newOrders} new, ${results.products.updatedOrders} updated`
   })
   
   return results

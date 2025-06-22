@@ -30,6 +30,7 @@ model Store {
   shopifyOrders        ShopifyOrder[]
   shopifyProducts      ShopifyProduct[]
   syncStatuses         SyncStatus[]
+  paymentMethodFees    PaymentMethodFee[]
 }
 
 model Product {
@@ -244,34 +245,28 @@ model VariableCost {
 }
 
 model FeeConfiguration {
-  id                    String    @id @default(uuid())
-  storeId               String    @unique
+  id                          String   @id @default(cuid())
+  storeId                     String   @unique
+  paymentGatewayRate          Float    @default(0.029)  // 2.9%
+  processingFeePerOrder       Float    @default(0.30)   // $0.30 per order
+  defaultCogRate              Float    @default(0.30)   // 30%
+  chargebackRate              Float    @default(0.006)  // 0.6%
+  returnProcessingRate        Float    @default(0.005)  // 0.5%
   
-  // Payment Gateway Fees
-  paymentGatewayRate    Float     @default(0.029)   // 2.9% default
-  processingFeePerOrder Float     @default(0.30)    // $0.30 per transaction
+  // Enhanced cost structure
+  overheadCostPerOrder        Float    @default(0.00)   // $ per order
+  overheadCostPerItem         Float    @default(0.00)   // $ per item
+  miscCostPerOrder            Float    @default(0.00)   // $ per order
+  miscCostPerItem             Float    @default(0.00)   // $ per item
   
-  // Cost of Goods Sold
-  defaultCogRate        Float     @default(0.40)    // 40% default
+  // NEW: Payment method-specific fee control
+  usePaymentMethodFees        Boolean  @default(false)  // Toggle for payment method-specific fees
   
-  // Overhead costs - DEPRECATED, replaced by AdditionalCost model
-  overheadCostRate      Float     @default(0.00)    // Percentage of revenue
-  overheadCostPerOrder  Float     @default(0.00)    // Fixed cost per order
-  overheadCostPerItem   Float     @default(0.00)    // Fixed cost per item
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
   
-  // Miscellaneous costs - DEPRECATED, replaced by AdditionalCost model
-  miscCostRate          Float     @default(0.00)    // Percentage of revenue
-  miscCostPerOrder      Float     @default(0.00)    // Fixed cost per order
-  miscCostPerItem       Float     @default(0.00)    // Fixed cost per item
-  
-  // Other configurable fees
-  chargebackRate        Float     @default(0.001)   // 0.1% default chargeback rate
-  returnRate            Float     @default(0.05)    // 5% default return rate
-  
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  
-  store                 Store     @relation(fields: [storeId], references: [id])
+  // Relationships
+  store                       Store    @relation(fields: [storeId], references: [id])
   
   @@index([storeId])
 }
@@ -359,6 +354,12 @@ model ShopifyOrder {
   gateway             String?
   processingMethod    String?
   
+  // NEW: Enhanced payment method tracking
+  paymentGateway      String?            // shopify_payments, paypal, stripe, etc.
+  paymentSource       String?            // web, pos, mobile, etc.
+  paymentMethod       String?            // computed: gateway_source (e.g., "shopify_payments_web")
+  transactionGateway  String?            // from transaction data
+  
   // Metadata
   tags                String?
   note                String?
@@ -375,6 +376,7 @@ model ShopifyOrder {
   @@index([financialStatus])
   @@index([fulfillmentStatus])
   @@index([lastSyncedAt])
+  @@index([paymentMethod])  // NEW: Index for payment method queries
 }
 
 model ShopifyLineItem {
@@ -492,4 +494,25 @@ model SyncStatus {
   @@unique([storeId, dataType])
   @@index([storeId])
   @@index([dataType])
+}
+
+// NEW: Payment method-specific fee configuration
+model PaymentMethodFee {
+  id                  String   @id @default(cuid())
+  storeId             String
+  paymentMethod       String   // e.g., "shopify_payments_web", "paypal_web", "stripe_web"
+  displayName         String   // e.g., "Shopify Payments (Online)", "PayPal (Online)"
+  percentageRate      Float    // e.g., 0.029 for 2.9%
+  fixedFee            Float    // e.g., 0.30 for $0.30
+  isActive            Boolean  @default(true)
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  // Relationships
+  store               Store    @relation(fields: [storeId], references: [id])
+  
+  @@unique([storeId, paymentMethod])
+  @@index([storeId])
+  @@index([paymentMethod])
 }
