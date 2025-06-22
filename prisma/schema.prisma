@@ -31,6 +31,9 @@ model Store {
   shopifyProducts      ShopifyProduct[]
   syncStatuses         SyncStatus[]
   paymentMethodFees    PaymentMethodFee[]
+  
+  // User management
+  users                User[]
 }
 
 model Product {
@@ -515,4 +518,29 @@ model PaymentMethodFee {
   @@unique([storeId, paymentMethod])
   @@index([storeId])
   @@index([paymentMethod])
+}
+
+// User management system
+model User {
+  id          String    @id @default(uuid())
+  storeId     String
+  username    String    @unique
+  password    String    // Hashed password
+  email       String?
+  firstName   String?
+  lastName    String?
+  role        String    @default("VIEWER") // ADMIN, SELLER, VIEWER
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String?   // ID of the admin who created this user
+  
+  // Relationships
+  store       Store     @relation(fields: [storeId], references: [id])
+  
+  @@index([storeId])
+  @@index([username])
+  @@index([role])
+  @@index([storeId, isActive])
 }

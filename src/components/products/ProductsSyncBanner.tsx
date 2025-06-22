@@ -46,9 +46,9 @@ export function ProductsSyncBanner({ onSyncStart, onSyncComplete }: ProductsSync
 
     fetchSyncStatus();
     
-    // Poll every 1 second during sync, every 30 seconds otherwise
+    // ✅ FIXED: Poll every 3 seconds during sync, every 5 seconds otherwise (faster detection)
     const interval = setInterval(fetchSyncStatus, 
-      syncStatus?.syncInProgress ? 1000 : 30000
+      syncStatus?.syncInProgress ? 3000 : 5000
     );
 
     return () => clearInterval(interval);

@@ -11,12 +11,12 @@ export async function GET() {
       return NextResponse.json({ error: 'No store found' }, { status: 404 });
     }
 
-    // Get sync status from database
+    // ✅ FIXED: Check orders sync status since that's what actually updates product costs
     const dbSyncStatus = await (prisma as any).syncStatus.findUnique({
       where: {
         storeId_dataType: {
           storeId: store.id,
-          dataType: 'products_costs'
+          dataType: 'orders'
         }
       }
     });
@@ -46,12 +46,12 @@ export async function GET() {
       nextSync.setDate(nextSync.getDate() + 1);
     }
 
-    const status = {
+        const status = {
       syncInProgress: dbSyncStatus?.syncInProgress || false,
-      syncType: null,
+      syncType: dbSyncStatus?.syncInProgress ? 'orders_sync_updating_costs' : null,
       totalProducts,
       processedProducts: totalProducts,
-      currentProduct: '',
+      currentProduct: dbSyncStatus?.syncInProgress ? 'Updating product costs from orders sync...' : '',
       lastSyncAt: dbSyncStatus?.lastSyncAt?.toISOString() || null,
       nextAutoSync: nextSync.toISOString(),
       errorMessage: dbSyncStatus?.errorMessage || null,

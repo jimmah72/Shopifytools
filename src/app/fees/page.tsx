@@ -551,36 +551,38 @@ export default function FeesPage() {
                   <Grid container spacing={2}>
                     <Grid item xs={12} md={6}>
                       <TextField
-                        fullWidth
-                        label="Payment Gateway Rate"
-                        type="number"
-                        value={(feeConfig.paymentGatewayRate * 100).toFixed(2)}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value) / 100;
-                          handleBasicFeeUpdate('paymentGatewayRate', value);
-                        }}
-                        InputProps={{
-                          endAdornment: <InputAdornment position="end">%</InputAdornment>,
-                        }}
-                        helperText="Standard payment processing rate"
-                        disabled={saving}
+                                              fullWidth
+                      label="Payment Gateway Rate"
+                      type="number"
+                      value={(feeConfig.paymentGatewayRate * 100).toFixed(2)}
+                      onChange={(e) => {
+                        const value = parseFloat(e.target.value) / 100;
+                        handleBasicFeeUpdate('paymentGatewayRate', value);
+                      }}
+                      InputProps={{
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                      }}
+                      inputProps={{ step: '0.01', min: '0', max: '100' }}
+                      helperText="Standard payment processing rate"
+                      disabled={saving}
                       />
                     </Grid>
                     <Grid item xs={12} md={6}>
                       <TextField
-                        fullWidth
-                        label="Processing Fee Per Order"
-                        type="number"
-                        value={feeConfig.processingFeePerOrder.toFixed(2)}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          handleBasicFeeUpdate('processingFeePerOrder', value);
-                        }}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">$</InputAdornment>,
-                        }}
-                        helperText="Fixed fee per transaction"
-                        disabled={saving}
+                                              fullWidth
+                      label="Processing Fee Per Order"
+                      type="number"
+                      value={feeConfig.processingFeePerOrder.toFixed(2)}
+                      onChange={(e) => {
+                        const value = parseFloat(e.target.value);
+                        handleBasicFeeUpdate('processingFeePerOrder', value);
+                      }}
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                      }}
+                      inputProps={{ step: '0.01', min: '0' }}
+                      helperText="Fixed fee per transaction"
+                      disabled={saving}
                       />
                     </Grid>
                   </Grid>
@@ -668,6 +670,7 @@ export default function FeesPage() {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
                       }}
+                      inputProps={{ step: '0.1', min: '0', max: '100' }}
                       helperText="Default cost of goods sold rate"
                       disabled={saving}
                     />
@@ -685,6 +688,7 @@ export default function FeesPage() {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
                       }}
+                      inputProps={{ step: '0.01', min: '0', max: '10' }}
                       helperText="Expected chargeback rate"
                       disabled={saving}
                     />
@@ -702,6 +706,7 @@ export default function FeesPage() {
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
                       }}
+                      inputProps={{ step: '0.01', min: '0', max: '100' }}
                       helperText="Return processing fee rate"
                       disabled={saving}
                     />
@@ -945,6 +950,7 @@ export default function FeesPage() {
               InputProps={{
                 endAdornment: <InputAdornment position="end">%</InputAdornment>,
               }}
+              inputProps={{ step: '0.01', min: '0', max: '100' }}
               helperText="e.g., 2.9 for 2.9%"
             />
             <TextField
@@ -956,6 +962,7 @@ export default function FeesPage() {
               InputProps={{
                 startAdornment: <InputAdornment position="start">$</InputAdornment>,
               }}
+              inputProps={{ step: '0.01', min: '0' }}
               helperText="e.g., 0.30 for $0.30 per transaction"
             />
             <FormControlLabel
@@ -1001,6 +1008,7 @@ export default function FeesPage() {
                   InputProps={{
                     endAdornment: <InputAdornment position="end">%</InputAdornment>,
                   }}
+                  inputProps={{ step: '0.01', min: '0', max: '100' }}
                   helperText="Applied to total order value"
                 />
               </Grid>
@@ -1014,6 +1022,7 @@ export default function FeesPage() {
                   InputProps={{
                     endAdornment: <InputAdornment position="end">%</InputAdornment>,
                   }}
+                  inputProps={{ step: '0.01', min: '0', max: '100' }}
                   helperText="Applied to each item value"
                 />
               </Grid>
@@ -1030,6 +1039,7 @@ export default function FeesPage() {
                   InputProps={{
                     startAdornment: <InputAdornment position="start">$</InputAdornment>,
                   }}
+                  inputProps={{ step: '0.01', min: '0' }}
                   helperText="Fixed cost per order"
                 />
               </Grid>
@@ -1043,6 +1053,7 @@ export default function FeesPage() {
                   InputProps={{
                     startAdornment: <InputAdornment position="start">$</InputAdornment>,
                   }}
+                  inputProps={{ step: '0.01', min: '0' }}
                   helperText="Fixed cost per item"
                 />
               </Grid>
@@ -1107,6 +1118,7 @@ export default function FeesPage() {
               InputProps={{
                 startAdornment: <InputAdornment position="start">$</InputAdornment>,
               }}
+              inputProps={{ step: '0.01', min: '0' }}
               helperText="Will be converted to daily rate for calculations"
             />
 

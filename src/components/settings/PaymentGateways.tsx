@@ -196,6 +196,8 @@ export default function PaymentGateways() {
               required
               value={formData.fixedFee}
               onChange={(e) => setFormData({ ...formData, fixedFee: e.target.value })}
+              inputProps={{ step: '0.01', min: '0' }}
+              helperText="e.g., 0.30 for $0.30 per transaction"
             />
             <TextField
               margin="dense"
@@ -205,6 +207,8 @@ export default function PaymentGateways() {
               required
               value={formData.percentageFee}
               onChange={(e) => setFormData({ ...formData, percentageFee: e.target.value })}
+              inputProps={{ step: '0.01', min: '0', max: '100' }}
+              helperText="e.g., 2.95 for 2.95%"
             />
             <TextField
               margin="dense"
@@ -214,6 +218,8 @@ export default function PaymentGateways() {
               required
               value={formData.externalFee}
               onChange={(e) => setFormData({ ...formData, externalFee: e.target.value })}
+              inputProps={{ step: '0.01', min: '0' }}
+              helperText="e.g., 0.25 for $0.25 external fee"
             />
           </DialogContent>
           <DialogActions>

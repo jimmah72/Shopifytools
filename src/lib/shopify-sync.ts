@@ -169,7 +169,7 @@ async function calculateHandlingFeesFromAdditionalCosts(storeId: string, product
 
 export async function syncShopifyOrders(storeId: string, timeframeDays: number = 30): Promise<SyncResult> {
   console.log(`📅 Starting Shopify orders sync for ${timeframeDays} days`)
-  console.log(`⚡ OPTIMIZED: Not fetching refunds during sync (uses existing DB data)`)
+  console.log(`💰 NEW: Fetching refunds for new orders during sync (existing orders use cached data)`)
 
   const result: SyncResult = {
     success: false,
@@ -248,6 +248,44 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
           
           console.log(`💳 Payment method detected for ${order.name}: ${paymentMethodData.paymentMethod}`)
 
+          // ✅ NEW: Fetch refunds for new orders
+          let totalRefunds = 0
+          try {
+            if (order.refunds && Array.isArray(order.refunds) && order.refunds.length > 0) {
+              totalRefunds = order.refunds.reduce((sum: number, refund: any) => {
+                const refundAmount = parseFloat(refund.transactions?.[0]?.amount || '0')
+                return sum + refundAmount
+              }, 0)
+              console.log(`💸 Found $${totalRefunds.toFixed(2)} in refunds for order ${order.name}`)
+            } else {
+              // If refunds aren't included in the order response, fetch them separately
+              const refundsResponse = await fetch(
+                `https://${store.domain}/admin/api/2025-04/orders/${order.id}/refunds.json`,
+                {
+                  headers: {
+                    'X-Shopify-Access-Token': store.accessToken
+                  }
+                }
+              )
+              
+              if (refundsResponse.ok) {
+                const refundsData = await refundsResponse.json()
+                if (refundsData.refunds && Array.isArray(refundsData.refunds)) {
+                  totalRefunds = refundsData.refunds.reduce((sum: number, refund: any) => {
+                    const refundAmount = parseFloat(refund.transactions?.[0]?.amount || '0')
+                    return sum + refundAmount
+                  }, 0)
+                  if (totalRefunds > 0) {
+                    console.log(`💸 Fetched $${totalRefunds.toFixed(2)} in refunds for order ${order.name}`)
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.warn(`⚠️ Could not fetch refunds for order ${order.name}:`, error)
+            totalRefunds = 0
+          }
+
           ordersData.push({
             id: order.id.toString(),
             storeId,
@@ -259,7 +297,7 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
             totalShipping: parseFloat(order.total_shipping_price_set?.shop_money?.amount || '0'),
             totalTax: parseFloat(order.total_tax || '0'),
             totalDiscounts: parseFloat(order.total_discounts || '0'),
-            totalRefunds: 0, // Initialize to 0 - will be populated by separate refunds process
+            totalRefunds: totalRefunds, // ✅ Now includes actual refunds for new orders
             currency: order.currency,
             financialStatus: order.financial_status,
             fulfillmentStatus: order.fulfillment_status,
@@ -349,9 +387,9 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
 
     console.log(`✅ Sync completed successfully:`)
     console.log(`   📊 Total orders processed: ${totalProcessed}`)
-    console.log(`   ➕ New orders: ${newOrdersCount}`)
-    console.log(`   🔄 Updated orders: ${updatedOrdersCount}`)
-    console.log(`   💡 Refunds: Using existing database data (not fetched during sync)`)
+    console.log(`   ➕ New orders: ${newOrdersCount} (includes refunds data)`)
+    console.log(`   🔄 Updated orders: ${updatedOrdersCount} (preserves existing refunds data)`)
+    console.log(`   💰 Refunds: New orders include fresh refunds data, existing orders use cached data`)
 
     result.success = true
     result.ordersProcessed = totalProcessed

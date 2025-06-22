@@ -3,9 +3,11 @@
 import React, { useState } from 'react'
 import { Box, Button, Paper, TextField, Typography, Alert, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle } from '@mui/material'
 import { useStore } from '@/contexts/StoreContext'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function ShopifyConnection() {
   const { store, refreshStore } = useStore()
+  const { user } = useAuth()
   const [shopDomain, setShopDomain] = useState('')
   const [error, setError] = useState('')
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false)
@@ -44,6 +46,12 @@ export default function ShopifyConnection() {
   }
 
   const handleDisconnect = async () => {
+    // Only allow admins to disconnect stores
+    if (user?.role !== 'ADMIN') {
+      setError('Only administrators can disconnect stores')
+      return
+    }
+
     setDisconnecting(true)
     console.log('ShopifyConnection - Disconnecting store')
     
@@ -92,14 +100,22 @@ export default function ShopifyConnection() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Your store is connected and syncing data.
           </Typography>
-          <Button 
-            variant="outlined" 
-            color="error"
-            onClick={() => setDisconnectDialogOpen(true)}
-            disabled={disconnecting}
-          >
-            Disconnect Store
-          </Button>
+          {/* Only show disconnect button to admins */}
+          {user?.role === 'ADMIN' && (
+            <Button 
+              variant="outlined" 
+              color="error"
+              onClick={() => setDisconnectDialogOpen(true)}
+              disabled={disconnecting}
+            >
+              Disconnect Store
+            </Button>
+          )}
+          {user?.role !== 'ADMIN' && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+              Only administrators can disconnect the store.
+            </Typography>
+          )}
         </Box>
       ) : (
         <Box component="form" onSubmit={handleConnect} sx={{ display: 'flex', gap: 2 }}>

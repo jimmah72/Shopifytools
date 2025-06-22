@@ -268,7 +268,7 @@ export default function FeeConfiguration() {
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
                       }}
                       helperText="Used when product-specific costs aren't available"
-                      inputProps={{ step: '1', min: '0', max: '100' }}
+                      inputProps={{ step: '0.1', min: '0', max: '100' }}
                     />
                   </Grid>
                 </Grid>

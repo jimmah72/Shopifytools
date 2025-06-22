@@ -27,11 +27,13 @@ export interface DashboardMetrics {
   paymentGatewayFees: number;
   processingFees: number;
   netRevenue: number;
+  netProfit: number;
   totalDiscounts?: number;
 }
 
 export type BreakdownType = 
   | 'netRevenue'
+  | 'netProfit'
   | 'paymentGatewayFees' 
   | 'processingFees'
   | 'cog'
@@ -42,7 +44,8 @@ export type BreakdownType =
   | 'totalItems'
   | 'totalDiscounts'
   | 'additionalCosts'
-  | 'subscriptionCosts';
+  | 'subscriptionCosts'
+  | 'fees';
 
 interface FinancialBreakdownProps {
   type: BreakdownType;
@@ -121,6 +124,93 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
                 <div>{formatCurrency(metrics.totalRevenue)} - {formatCurrency(metrics.totalRefunds)} - {formatCurrency(metrics.paymentGatewayFees)} - {formatCurrency(metrics.processingFees)} = {formatCurrency(metrics.netRevenue)}</div>
                 <div className="mt-2">
                   <span className="font-medium">Net Margin:</span> {((metrics.netRevenue / metrics.totalRevenue) * 100).toFixed(2)}%
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+        
+      case 'netProfit':
+        return (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-400">
+              Net profit represents the final profit after all costs including fees, COG, and expenses.
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-green-900/20 rounded-lg border border-green-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-green-400" />
+                  <span className="text-green-400">Total Revenue</span>
+                </div>
+                <span className="font-medium text-green-400">{formatCurrency(metrics.totalRevenue)}</span>
+              </div>
+              
+              <div className="text-sm text-gray-500 px-3">Less all costs:</div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Refunds</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.totalRefunds)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Gateway Fees</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.paymentGatewayFees)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Processing Fees</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.processingFees)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Cost of Goods</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.cog)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Additional Costs</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.additionalCosts)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4 text-red-400" />
+                  <span className="text-red-400">Subscription Costs</span>
+                </div>
+                <span className="font-medium text-red-400">-{formatCurrency(metrics.subscriptionCosts)}</span>
+              </div>
+              
+              <div className="border-t border-gray-600 pt-3">
+                <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-lg border border-blue-600/30">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="w-4 h-4 text-blue-400" />
+                    <span className="text-blue-400 font-medium">Net Profit</span>
+                  </div>
+                  <span className="font-bold text-blue-400">{formatCurrency(metrics.netProfit)}</span>
+                </div>
+              </div>
+              
+              <div className="text-xs text-gray-500 bg-gray-800 p-3 rounded-lg">
+                <div className="font-medium mb-1">Calculation:</div>
+                <div className="break-words">{formatCurrency(metrics.totalRevenue)} - {formatCurrency(metrics.totalRefunds)} - {formatCurrency(metrics.paymentGatewayFees)} - {formatCurrency(metrics.processingFees)} - {formatCurrency(metrics.cog)} - {formatCurrency(metrics.additionalCosts)} - {formatCurrency(metrics.subscriptionCosts)} = {formatCurrency(metrics.netProfit)}</div>
+                <div className="mt-2">
+                  <span className="font-medium">Profit Margin:</span> {((metrics.netProfit / metrics.totalRevenue) * 100).toFixed(2)}%
                 </div>
               </div>
             </div>
@@ -484,6 +574,68 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
                 </div>
                 <div className="mt-2 text-blue-400">
                   💡 Manage subscriptions in Settings → Fees to track all recurring costs
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+        
+      case 'fees':
+        return (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-400">
+              Total fees include all payment processing fees charged by gateways and processors.
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Total Revenue</span>
+                <span className="font-medium">{formatCurrency(metrics.totalRevenue)}</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Total Orders</span>
+                <span className="font-medium">{formatNumber(metrics.totalOrders)}</span>
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <div className="text-sm text-gray-500 px-3">Fee Breakdown:</div>
+                
+                <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-red-400" />
+                    <span className="text-red-400">Gateway Fees</span>
+                  </div>
+                  <span className="font-medium text-red-400">{formatCurrency(metrics.paymentGatewayFees)}</span>
+                </div>
+                
+                <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-red-400" />
+                    <span className="text-red-400">Processing Fees</span>
+                  </div>
+                  <span className="font-medium text-red-400">{formatCurrency(metrics.processingFees)}</span>
+                </div>
+              </div>
+              
+              <div className="border-t border-gray-600 pt-3">
+                <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="w-4 h-4 text-red-400" />
+                    <span className="text-red-400 font-medium">Total Fees</span>
+                  </div>
+                  <span className="font-bold text-red-400">{formatCurrency(metrics.fees)}</span>
+                </div>
+              </div>
+              
+              <div className="text-xs text-gray-500 bg-gray-800 p-3 rounded-lg">
+                <div className="font-medium mb-1">Calculation:</div>
+                <div>{formatCurrency(metrics.paymentGatewayFees)} + {formatCurrency(metrics.processingFees)} = {formatCurrency(metrics.fees)}</div>
+                <div className="mt-2">
+                  <span className="font-medium">Fee Rate:</span> {((metrics.fees / metrics.totalRevenue) * 100).toFixed(2)}% of revenue
+                </div>
+                <div className="mt-2 text-green-400">
+                  ✅ Based on your configured payment gateway and processing fee rates
                 </div>
               </div>
             </div>

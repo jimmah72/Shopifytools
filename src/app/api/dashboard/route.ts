@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getBulkShippingCosts, calculateTotalShippingCost } from '@/lib/shipping-db'
 
 // Disable caching for testing refunds data
 // export const revalidate = 300;
@@ -29,6 +30,7 @@ interface DashboardMetrics {
   paymentGatewayFees: number;
   processingFees: number;
   netRevenue: number;
+  netProfit: number;  // NEW: Net profit after all costs
   totalDiscounts: number;
   recentOrders: Array<{
     id: string;
@@ -49,6 +51,7 @@ export async function GET(request: NextRequest) {
     // Get query parameters
     const searchParams = request.nextUrl.searchParams
     const timeframe = searchParams.get('timeframe') || '30d'
+    const fulfillmentStatus = searchParams.get('fulfillmentStatus') || 'all'
     
     // Get the first store from the database
     const store = await prisma.store.findFirst({
@@ -89,14 +92,26 @@ export async function GET(request: NextRequest) {
         break
     }
 
-    // Create date filter for orders
-    const dateFilter = {
+    // Create date filter for orders with optional fulfillment status filtering
+    const dateFilter: any = {
       storeId: store.id,
       createdAt: {
         gte: startDate,
         lte: endDate
       }
     }
+
+    // Add fulfillment status filter if specified
+    if (fulfillmentStatus !== 'all') {
+      // Map frontend filter values to actual database values
+      if (fulfillmentStatus === 'unfulfilled') {
+        dateFilter.fulfillmentStatus = null  // Database stores unfulfilled as actual null
+      } else {
+        dateFilter.fulfillmentStatus = fulfillmentStatus
+      }
+    }
+
+    console.log(`Dashboard API - Filtering by fulfillment status: ${fulfillmentStatus}`)
 
     // Get fee configuration for this store
     let feeConfig = await (prisma as any).feeConfiguration.findUnique({
@@ -169,9 +184,9 @@ export async function GET(request: NextRequest) {
         }
       }),
       
-      // Get recent orders (last 5)
+      // Get recent orders (last 5 from filtered dataset)
       (prisma as any).shopifyOrder.findMany({
-        where: { storeId: store.id },
+        where: dateFilter,
         orderBy: { createdAt: 'desc' },
         take: 5,
         select: {
@@ -206,9 +221,101 @@ export async function GET(request: NextRequest) {
     const totalItems = totalItemsData._sum.quantity || 0
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
 
+    // ✅ NEW: Get actual shipping costs from second database for filtered orders
+    console.log('Dashboard API - Fetching shipping costs from second database...');
+    let actualShippingCosts = 0;
+    let shippingCostsCoverage = 0;
+    
+    try {
+      // Get order names for the filtered period
+      const ordersForShipping = await (prisma as any).shopifyOrder.findMany({
+        where: dateFilter,
+        select: { orderName: true }
+      });
+      
+      const orderNames = ordersForShipping.map((order: any) => order.orderName);
+      
+      if (orderNames.length > 0) {
+        // Fetch shipping costs in bulk from second database (filtered by fulfillment status)
+        const shippingCostsData = await getBulkShippingCosts(orderNames, fulfillmentStatus);
+        
+        // Calculate total shipping costs
+        Object.values(shippingCostsData).forEach(shippingCosts => {
+          actualShippingCosts += calculateTotalShippingCost(shippingCosts);
+        });
+        
+        // Calculate coverage percentage
+        const ordersWithShippingData = Object.keys(shippingCostsData).length;
+        shippingCostsCoverage = orderNames.length > 0 ? (ordersWithShippingData / orderNames.length) * 100 : 0;
+        
+        console.log(`Dashboard API - Shipping costs: $${actualShippingCosts.toFixed(2)} (${shippingCostsCoverage.toFixed(1)}% coverage)`);
+      }
+    } catch (shippingError) {
+      console.warn('Dashboard API - Could not fetch shipping costs from second database:', shippingError);
+      actualShippingCosts = 0;
+      shippingCostsCoverage = 0;
+    }
+
+    // ✅ FIXED: Calculate ACTUAL COG from our synced product data using efficient join
+    console.log('Dashboard API - Calculating actual COG from local product cost data...');
+    
+    // Use raw SQL for efficient calculation with proper filtering
+    let cogCalculation;
+    if (fulfillmentStatus !== 'all') {
+      // Map fulfillment status for SQL query
+      const sqlFulfillmentStatus = fulfillmentStatus === 'unfulfilled' ? null : fulfillmentStatus;
+      
+      cogCalculation = await (prisma as any).$queryRaw`
+        SELECT 
+          SUM(li.quantity * COALESCE(spv."costPerItem", 0)) as actual_cog,
+          COUNT(*) as total_line_items,
+          COUNT(CASE WHEN spv."costPerItem" > 0 THEN 1 END) as items_with_costs
+        FROM "ShopifyLineItem" li
+        INNER JOIN "ShopifyOrder" so ON li."orderId" = so.id  
+        LEFT JOIN "ShopifyProductVariant" spv ON li."variantId" = spv.id
+        WHERE so."storeId" = ${store.id}
+          AND so."createdAt" >= ${startDate}
+          AND so."createdAt" <= ${endDate}
+          AND so."fulfillmentStatus" = ${sqlFulfillmentStatus}
+      `;
+    } else {
+      cogCalculation = await (prisma as any).$queryRaw`
+        SELECT 
+          SUM(li.quantity * COALESCE(spv."costPerItem", 0)) as actual_cog,
+          COUNT(*) as total_line_items,
+          COUNT(CASE WHEN spv."costPerItem" > 0 THEN 1 END) as items_with_costs
+        FROM "ShopifyLineItem" li
+        INNER JOIN "ShopifyOrder" so ON li."orderId" = so.id  
+        LEFT JOIN "ShopifyProductVariant" spv ON li."variantId" = spv.id
+        WHERE so."storeId" = ${store.id}
+          AND so."createdAt" >= ${startDate}
+          AND so."createdAt" <= ${endDate}
+      `;
+    }
+    
+    const result = cogCalculation[0];
+    const actualCOG = parseFloat(result.actual_cog || '0');
+    const totalLineItems = parseInt(result.total_line_items || '0');
+    const itemsWithCosts = parseInt(result.items_with_costs || '0');
+    
+    const estimatedCOG = totalRevenue * feeConfig.defaultCogRate; // Keep as fallback
+    
+    // Use actual COG if we have cost data, otherwise fall back to estimate
+    const finalCOG = actualCOG > 0 ? actualCOG : estimatedCOG;
+    
+    console.log('Dashboard API - COG calculation:', {
+      actualCOG: actualCOG.toFixed(2),
+      estimatedCOG: estimatedCOG.toFixed(2), 
+      finalCOG: finalCOG.toFixed(2),
+      itemsWithCosts: itemsWithCosts,
+      totalLineItems: totalLineItems,
+      coveragePercent: totalLineItems > 0 ? ((itemsWithCosts / totalLineItems) * 100).toFixed(1) + '%' : '0%',
+      usingActual: actualCOG > 0,
+      dataSource: actualCOG > 0 ? 'local_database_actual_costs' : 'estimated_cog_rate'
+    });
+
     // Calculate financial metrics using configured rates
-    const adSpend = 0 // TODO: Integrate with ad platforms
-    const estimatedCOG = totalRevenue * feeConfig.defaultCogRate
+    const adSpend = 0 // TODO: Integrate with ad platforms  
     const estimatedGatewayFees = totalRevenue * feeConfig.paymentGatewayRate
     const estimatedProcessingFees = totalOrders * feeConfig.processingFeePerOrder
     
@@ -235,6 +342,9 @@ export async function GET(request: NextRequest) {
     
     const estimatedChargebacks = totalRevenue * feeConfig.chargebackRate
     const netRevenue = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees
+    
+    // ✅ FIXED: Calculate net profit showing all deductions clearly (including shipping costs)
+    const netProfit = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees - finalCOG - additionalCosts - subscriptionCosts - actualShippingCosts
 
     // Log detailed net revenue calculations
     console.log('=== NET REVENUE CALCULATION (Using Configured Rates + Dynamic Costs) ===')
@@ -277,9 +387,11 @@ export async function GET(request: NextRequest) {
     console.log(`   💚 Net Revenue: $${netRevenue.toFixed(2)}`)
     console.log(`   📉 Total Fees & Refunds: $${(totalRefunds + estimatedGatewayFees + estimatedProcessingFees).toFixed(2)}`)
     console.log(`   📊 Net Margin: ${((netRevenue / totalRevenue) * 100).toFixed(2)}%`)
-    console.log(`   📦 Estimated COG: $${estimatedCOG.toFixed(2)} (${(feeConfig.defaultCogRate * 100).toFixed(1)}%)`)
+          console.log(`   📦 ${actualCOG > 0 ? 'Actual' : 'Estimated'} COG: $${finalCOG.toFixed(2)} ${actualCOG > 0 ? '(from local database)' : `(${(feeConfig.defaultCogRate * 100).toFixed(1)}% estimate)`}`)
     console.log(`   🏗️  Additional Costs: $${additionalCosts.toFixed(2)}`)
     console.log(`   💼 Subscription Costs: $${subscriptionCosts.toFixed(2)}`)
+    console.log(`   🚚 Shipping Costs: $${actualShippingCosts.toFixed(2)} (${shippingCostsCoverage.toFixed(1)}% coverage from 2nd DB)`)
+    console.log(`   📋 Fulfillment Filter: ${fulfillmentStatus}`)
     console.log(`   🎟️  Total Discounts (not deducted): $${totalDiscounts.toFixed(2)}`)
     console.log('========================================================')
 
@@ -311,10 +423,10 @@ export async function GET(request: NextRequest) {
       adSpend,
       roas,
       poas,
-      cog: estimatedCOG,
+      cog: finalCOG,
       fees: estimatedGatewayFees + estimatedProcessingFees,
       overheadCosts, // DEPRECATED - now always 0
-      shippingCosts: 0, // REMOVED - will be handled by shipping API integration
+      shippingCosts: actualShippingCosts, // ✅ NEW: Actual shipping costs from second database
       miscCosts, // DEPRECATED - now always 0
       additionalCosts, // NEW: Dynamic additional costs
       subscriptionCosts, // NEW: Daily subscription costs for timeframe
@@ -323,6 +435,7 @@ export async function GET(request: NextRequest) {
       paymentGatewayFees: estimatedGatewayFees,
       processingFees: estimatedProcessingFees,
       netRevenue,
+      netProfit,  // NEW: Net profit after all costs
       totalDiscounts,  // NEW: Include discounts in response
       recentOrders,
       dataSource: 'local_database',

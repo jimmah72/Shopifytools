@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SyncProgressIndicator } from '@/components/dashboard/SyncProgressIndicator';
+import { FulfillmentStatusFilter, FulfillmentStatusOption, getCalculationAccuracyWarning } from '@/components/dashboard/FulfillmentStatusFilter';
 import { Modal } from '@/components/ui/modal';
 import { 
   FinancialBreakdown, 
@@ -27,7 +28,8 @@ import {
   Banknote,
   PiggyBank,
   Plus,
-  Calendar
+  Calendar,
+  AlertCircle
 } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 
@@ -94,6 +96,7 @@ interface DashboardMetrics {
   paymentGatewayFees: number;
   processingFees: number;
   netRevenue: number;
+  netProfit: number;  // NEW
   totalDiscounts: number;
   recentOrders: Array<{
     id: string;
@@ -119,6 +122,13 @@ export default function DashboardPage() {
     }
     return '30d';
   });
+  const [fulfillmentStatus, setFulfillmentStatus] = useState<FulfillmentStatusOption>(() => {
+    // Persist fulfillment status across page refreshes
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('dashboard-fulfillment-status') as FulfillmentStatusOption) || 'all';
+    }
+    return 'all';
+  });
   const [lastAutoRefresh, setLastAutoRefresh] = useState<Date | null>(null);
   
   // Modal state
@@ -139,6 +149,8 @@ export default function DashboardPage() {
     if (!type) return '';
     switch (type) {
       case 'netRevenue': return 'Net Revenue Breakdown';
+      case 'netProfit': return 'Net Profit Breakdown';
+      case 'fees': return 'Fees Breakdown';
       case 'paymentGatewayFees': return 'Payment Gateway Fees';
       case 'processingFees': return 'Processing Fees Breakdown';
       case 'cog': return 'Cost of Goods Breakdown';
@@ -152,12 +164,17 @@ export default function DashboardPage() {
     }
   };
 
-  const fetchDashboardData = async (selectedTimeframe = timeframe) => {
+  const fetchDashboardData = async (selectedTimeframe = timeframe, selectedFulfillmentStatus = fulfillmentStatus) => {
     try {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`/api/dashboard?timeframe=${selectedTimeframe}`);
+      const params = new URLSearchParams({
+        timeframe: selectedTimeframe,
+        fulfillmentStatus: selectedFulfillmentStatus
+      });
+      
+      const response = await fetch(`/api/dashboard?${params.toString()}`);
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.details || 'Failed to fetch dashboard data');
@@ -175,7 +192,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboardData();
-  }, [timeframe]);
+  }, [timeframe, fulfillmentStatus]);
 
   const handleTimeframeChange = (newTimeframe: string) => {
     setTimeframe(newTimeframe);
@@ -183,7 +200,16 @@ export default function DashboardPage() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('dashboard-timeframe', newTimeframe);
     }
-    fetchDashboardData(newTimeframe);
+    fetchDashboardData(newTimeframe, fulfillmentStatus);
+  };
+
+  const handleFulfillmentStatusChange = (newStatus: FulfillmentStatusOption) => {
+    setFulfillmentStatus(newStatus);
+    // Persist fulfillment status selection across page refreshes
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dashboard-fulfillment-status', newStatus);
+    }
+    fetchDashboardData(timeframe, newStatus);
   };
 
   const handleTriggerSync = async () => {
@@ -244,10 +270,41 @@ export default function DashboardPage() {
         className="mb-6"
       />
 
+      {/* Fulfillment Status Filter */}
+      <div className="mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-200 mb-2">
+              Filter by Fulfillment Status
+            </label>
+            <FulfillmentStatusFilter
+              selectedStatus={fulfillmentStatus}
+              onStatusChange={handleFulfillmentStatusChange}
+            />
+          </div>
+          
+          {/* Accuracy Warning */}
+          {getCalculationAccuracyWarning(fulfillmentStatus) && (
+            <div className="bg-yellow-900/20 border border-yellow-600 rounded-lg p-3 flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-yellow-200 text-sm font-medium">Calculation Accuracy Note</p>
+                <p className="text-yellow-100 text-sm mt-1">
+                  {getCalculationAccuracyWarning(fulfillmentStatus)}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Data Source Indicator */}
       {metrics && (
         <div className="mb-4 text-sm text-gray-400">
           Data source: {metrics.dataSource === 'local_database' ? '🗄️ Local Database (Fast)' : '☁️  Shopify API (Slow)'}
+          <span className="ml-2">
+            • Filters: {getTimeframeLabel(timeframe)}, {fulfillmentStatus === 'all' ? 'All Orders' : `${fulfillmentStatus.charAt(0).toUpperCase() + fulfillmentStatus.slice(1)} Orders`}
+          </span>
           {metrics.lastSyncTime && (
             <span className="ml-2">
               • Last sync: {new Date(metrics.lastSyncTime).toLocaleString()}
@@ -262,7 +319,7 @@ export default function DashboardPage() {
       )}
 
       {/* Main Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
         <StatCard
           title="Total Revenue"
           value={metrics ? formatCurrency(metrics.totalRevenue) : '$0'}
@@ -271,18 +328,30 @@ export default function DashboardPage() {
           variant="income"
         />
         <StatCard
+          title="Net Revenue"
+          value={metrics ? formatCurrency(metrics.netRevenue || metrics.totalRevenue || 0) : '$0'}
+          icon={PiggyBank}
+          loading={loading}
+          variant="income"
+          clickable={true}
+          onClick={() => openModal('netRevenue')}
+        />
+        <StatCard
+          title="Net Profit"
+          value={metrics ? formatCurrency(metrics.netProfit || 0) : '$0'}
+          icon={TrendingUp}
+          loading={loading}
+          variant="income"
+          clickable={true}
+          onClick={() => openModal('netProfit')}
+        />
+        <StatCard
           title="Total Orders / Total Items / Avg Items Per Order"
           value={metrics ? `${metrics.totalOrders.toLocaleString()} / ${metrics.totalItems.toLocaleString()} / ${metrics.totalOrders > 0 ? (metrics.totalItems / metrics.totalOrders).toFixed(1) : '0'}` : '0 / 0 / 0'}
           icon={ShoppingCart}
           loading={loading}
           clickable={true}
           onClick={() => openModal('totalItems')}
-        />
-        <StatCard
-          title="Total Products"
-          value={metrics ? metrics.totalProducts.toLocaleString() : '0'}
-          icon={Package}
-          loading={loading}
         />
         <StatCard
           title="Avg Order Value"
@@ -295,13 +364,19 @@ export default function DashboardPage() {
       </div>
 
       {/* Secondary Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+        <StatCard
+          title="Total Products"
+          value={metrics ? metrics.totalProducts.toLocaleString() : '0'}
+          icon={Package}
+          loading={loading}
+        />
         <StatCard
           title="Shipping Revenue"
           value={metrics ? formatCurrency(metrics.totalShippingRevenue) : '$0'}
           icon={Truck}
           loading={loading}
-          variant="income"
+          variant="neutral"
         />
         <StatCard
           title="Total Taxes"
@@ -381,6 +456,8 @@ export default function DashboardPage() {
             icon={CreditCard}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('fees')}
           />
           <StatCard
             title="Additional Costs"
@@ -413,7 +490,7 @@ export default function DashboardPage() {
       {/* Financial Impact & Adjustments */}
       <div className="mb-4">
         <h2 className="text-xl font-semibold text-gray-200 mb-4">Financial Impact & Adjustments</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard
             title="Total Refunds"
             value={metrics ? formatCurrency(metrics.totalRefunds || 0) : '$0'}
@@ -447,15 +524,6 @@ export default function DashboardPage() {
             variant="expense"
             clickable={true}
             onClick={() => openModal('processingFees')}
-          />
-          <StatCard
-            title="Net Revenue"
-            value={metrics ? formatCurrency(metrics.netRevenue || metrics.totalRevenue || 0) : '$0'}
-            icon={PiggyBank}
-            loading={loading}
-            variant="income"
-            clickable={true}
-            onClick={() => openModal('netRevenue')}
           />
         </div>
       </div>

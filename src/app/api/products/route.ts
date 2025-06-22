@@ -517,6 +517,8 @@ export async function GET(request: NextRequest) {
         : product.id;
     });
 
+    // ✅ MOVED: Will pre-fetch variant costs AFTER pagination for better performance
+
     // Transform ALL products to our format (now async)
     const transformedProducts = await Promise.all(filteredProducts.map(async (shopifyProduct: ShopifyProduct) => {
       // Extract numeric ID from GraphQL ID format
@@ -562,10 +564,12 @@ export async function GET(request: NextRequest) {
       if (!shopifyInventoryCost && cachedProduct?.variants && cachedProduct.variants.length > 0) {
         const firstVariant = cachedProduct.variants[0];
         shopifyInventoryCost = firstVariant?.costPerItem || null;
-        if (shopifyInventoryCost) {
-          console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - using variant cost: $${shopifyInventoryCost}`);
+        if (shopifyInventoryCost && shopifyInventoryCost > 0) {
+          console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - using cached variant cost: $${shopifyInventoryCost}`);
         }
       }
+      
+      // ✅ REMOVED: Will handle fresh variant costs after pagination to avoid rate limiting
       
       // ✅ FIX: For products with SHOPIFY cost source, use the Shopify cost as the main cost
       const displayCostOfGoodsSold = (costSource === 'SHOPIFY' && shopifyInventoryCost) 
@@ -723,6 +727,51 @@ export async function GET(request: NextRequest) {
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
     const paginatedProducts = filteredAndTransformedProducts.slice(startIndex, endIndex);
+
+    // ✅ NEW: Pre-fetch fresh variant costs ONLY for paginated products (to avoid rate limiting)
+    let freshVariantCostsForPageProducts: Record<string, Record<string, number>> = {};
+    const pageProductsNeedingFreshCosts = paginatedProducts.filter((product: any) => {
+      const existingProduct = existingProductsMap.get(product.id);
+      const cachedProduct = shopifyProductsMap.get(product.id);
+      
+      // Only fetch for SHOPIFY products without good cached costs
+      if (product.costSource === 'SHOPIFY') {
+        const hasGoodSavedCost = existingProduct?.costOfGoodsSold && existingProduct.costOfGoodsSold > 0;
+        const hasGoodVariantCost = cachedProduct?.variants?.[0]?.costPerItem && cachedProduct.variants[0].costPerItem > 0;
+        const hasGoodDisplayCost = product.shopifyCostOfGoodsSold && product.shopifyCostOfGoodsSold > 0;
+        return !hasGoodSavedCost && !hasGoodVariantCost && !hasGoodDisplayCost;
+      }
+      return false;
+    }).map((product: any) => product.id);
+
+    if (pageProductsNeedingFreshCosts.length > 0) {
+      console.log(`💰 Fetching fresh variant costs for ${pageProductsNeedingFreshCosts.length} SHOPIFY products on current page (avoiding rate limits)`);
+      try {
+        freshVariantCostsForPageProducts = await getProductsVariantCostData(formattedDomain, store.accessToken, pageProductsNeedingFreshCosts);
+        
+        // Apply fresh variant costs to products that need them
+        for (const product of paginatedProducts) {
+          if (product.costSource === 'SHOPIFY' && pageProductsNeedingFreshCosts.includes(product.id)) {
+            const productVariantCosts = freshVariantCostsForPageProducts[product.id];
+            if (productVariantCosts && Object.keys(productVariantCosts).length > 0) {
+              // Use the first variant cost as the product cost
+              const firstVariantCost = Object.values(productVariantCosts)[0];
+              if (firstVariantCost && firstVariantCost > 0) {
+                product.costOfGoodsSold = firstVariantCost;
+                product.shopifyCostOfGoodsSold = firstVariantCost;
+                console.log(`💰 Product ${product.id} "${product.title}" - applied fresh variant cost: $${firstVariantCost}`);
+                
+                // Recalculate margin with the fresh cost
+                const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
+                product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error fetching variant costs for current page:', error);
+      }
+    }
 
     // ✅ PERFORMANCE: Use cached handling fees from database (calculated during sync)
     for (const product of paginatedProducts) {
@@ -940,4 +989,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-}
+} 

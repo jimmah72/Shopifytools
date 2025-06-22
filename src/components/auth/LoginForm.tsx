@@ -19,13 +19,14 @@ export function LoginForm() {
     setIsLoading(true)
     setError('')
 
-    // Small delay to show loading state
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    const success = login(username, password)
-    
-    if (!success) {
-      setError('Invalid username or password')
+    try {
+      const success = await login(username, password)
+      
+      if (!success) {
+        setError('Invalid username or password')
+      }
+    } catch (error) {
+      setError('Login failed. Please try again.')
     }
     
     setIsLoading(false)
@@ -116,7 +117,7 @@ export function LoginForm() {
           {/* Footer */}
           <div className="mt-6 text-center">
             <p className="text-xs text-gray-500">
-              Demo credentials: admin / shopify123
+              Contact your administrator for login credentials
             </p>
           </div>
         </div>

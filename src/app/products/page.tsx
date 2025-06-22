@@ -225,7 +225,8 @@ export default function ProductsPage() {
       costSource: costSourceFilter, 
       costData: costDataFilter 
     },
-    forceSync: boolean = false
+    forceSync: boolean = false,
+    showLoading: boolean = true // NEW: Control whether to show loading spinner
   ) => {
     // ✅ FIX: Simple request deduplication without state dependency
     const requestKey = JSON.stringify({ page, search, sort, filters, forceSync });
@@ -250,10 +251,13 @@ export default function ProductsPage() {
       - Filters: ${JSON.stringify(filters)}
       - Auto-sync: ${autoSyncEnabled}
       - Force sync: ${forceSync}
+      - Show loading: ${showLoading}
       - Timestamp: ${new Date().toISOString()}`);
     
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       setError(null);
       
       const params = new URLSearchParams({
@@ -312,7 +316,9 @@ export default function ProductsPage() {
       console.error(`❌ fetchProducts error [${callId}]:`, err);
       setError(err instanceof Error ? err.message : 'Failed to fetch products');
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }, [PRODUCTS_PER_PAGE, sortField, sortDirection, statusFilter, costSourceFilter, costDataFilter, autoSyncEnabled]);
 
@@ -341,7 +347,8 @@ export default function ProductsPage() {
         debouncedSearchTerm,
         { field: sortField, direction: sortDirection },
         { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
-        false // forceSync = false for normal page loads
+        false, // forceSync = false for normal page loads
+        true // showLoading = true (normal page loads should show loading)
       );
     } else {
       console.log(`🔄 useEffect [${effectId}] - SKIPPED fetchProducts (conditions not met)`);
@@ -385,7 +392,8 @@ export default function ProductsPage() {
         debouncedSearchTerm,
         { field: sortField, direction: sortDirection },
         { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
-        true // forceSync = true
+        true, // forceSync = true
+        false // showLoading = false (manual sync should not hide existing data)
       );
       console.log('✅ Manual sync completed for current page');
     } catch (error) {
@@ -788,7 +796,8 @@ export default function ProductsPage() {
             debouncedSearchTerm,
             { field: sortField, direction: sortDirection },
             { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
-            true // forceSync = true after global sync completion
+            true, // forceSync = true after global sync completion
+            false // showLoading = false (background sync - don't show loading spinner)
           ).then(() => {
             console.log('ProductsPage - Product data refreshed after sync completion');
           });
