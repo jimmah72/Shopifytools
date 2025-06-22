@@ -132,6 +132,40 @@ function detectPaymentMethod(order: any) {
   }
 }
 
+// ✅ NEW: Function to calculate handling fees during sync
+async function calculateHandlingFeesFromAdditionalCosts(storeId: string, productPrice: number): Promise<number> {
+  try {
+    // Fetch all active additional costs for the store
+    const additionalCosts = await (prisma as any).additionalCost.findMany({
+      where: { 
+        storeId: storeId,
+        isActive: true 
+      }
+    });
+
+    if (!additionalCosts || additionalCosts.length === 0) {
+      return 0;
+    }
+
+    let totalHandlingFees = 0;
+
+    additionalCosts.forEach((cost: any) => {
+      // Item-level fees (direct application)
+      totalHandlingFees += cost.flatRatePerItem || 0;
+      totalHandlingFees += (cost.percentagePerItem || 0) * productPrice / 100;
+
+      // Order-level fees (applied per item - user requirement)
+      totalHandlingFees += cost.flatRatePerOrder || 0;
+      totalHandlingFees += (cost.percentagePerOrder || 0) * productPrice / 100;
+    });
+
+    return Math.round(totalHandlingFees * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('Error calculating handling fees from additional costs:', error);
+    return 0;
+  }
+}
+
 export async function syncShopifyOrders(storeId: string, timeframeDays: number = 30): Promise<SyncResult> {
   console.log(`📅 Starting Shopify orders sync for ${timeframeDays} days`)
   console.log(`⚡ OPTIMIZED: Not fetching refunds during sync (uses existing DB data)`)
@@ -467,16 +501,28 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
             where: { productId }
           })
 
+          let firstVariantPrice = 0
+          let firstVariantCost = 0
+
           if (product.variants && Array.isArray(product.variants)) {
             const variantsData = product.variants.map((variant: any) => {
+              const price = parseFloat(variant.price) || 0
+              const cost = variant.inventoryItem?.unitCost?.amount ? parseFloat(variant.inventoryItem.unitCost.amount) : null
+              
+              // Track first variant for main product record
+              if (firstVariantPrice === 0) {
+                firstVariantPrice = price
+                firstVariantCost = cost || 0
+              }
+
               return {
                 id: variant.id.replace('gid://shopify/ProductVariant/', ''),
                 productId,
                 title: variant.title || 'Default Title',
                 sku: variant.sku,
-                price: parseFloat(variant.price) || 0,
+                price: price,
                 compareAtPrice: variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null,
-                costPerItem: variant.inventoryItem?.unitCost?.amount ? parseFloat(variant.inventoryItem.unitCost.amount) : null,
+                costPerItem: cost,
                 inventoryQuantity: variant.inventoryQuantity || 0,
                 inventoryPolicy: variant.inventoryPolicy,
                 inventoryManagement: variant.inventoryManagement,
@@ -494,6 +540,40 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
                 data: variantsData
               })
             }
+          }
+
+          // ✅ NEW: Update or create main Product record with calculated handling fees
+          if (firstVariantPrice > 0) {
+            const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(storeId, firstVariantPrice)
+            
+            await prisma.product.upsert({
+              where: { shopifyId: productId },
+              update: {
+                title: product.title,
+                price: firstVariantPrice,
+                sellingPrice: firstVariantPrice,
+                costOfGoodsSold: firstVariantCost,
+                handlingFees: calculatedHandlingFees,
+                costSource: 'SHOPIFY',
+                lastEdited: new Date(),
+                status: product.status?.toLowerCase() || 'active'
+              },
+              create: {
+                shopifyId: productId,
+                storeId,
+                title: product.title,
+                price: firstVariantPrice,
+                sellingPrice: firstVariantPrice,
+                cost: firstVariantCost,
+                costOfGoodsSold: firstVariantCost,
+                handlingFees: calculatedHandlingFees,
+                costSource: 'SHOPIFY',
+                status: product.status?.toLowerCase() || 'active',
+                lastEdited: new Date()
+              }
+            })
+            
+            console.log(`💰 Sync - Calculated handling fees for "${product.title}": $${calculatedHandlingFees} (price: $${firstVariantPrice})`)
           }
 
           result.ordersProcessed++

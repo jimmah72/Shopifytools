@@ -198,7 +198,7 @@ export function CostOfGoodsTable({
 
   const getDisplayedHandlingFees = (product: CostOfGoodsTable.Product) => {
     if (product.costSource === 'SHOPIFY') {
-      return 0;
+      return product.shopifyHandlingFees || 0;
     }
     return product.handlingFees;
   };
@@ -571,16 +571,16 @@ export function CostOfGoodsTable({
                         />
                       ) : (
                         <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
-                          {formatCurrency(variant.cost ?? variant.inventory_cost)}
+                          {formatCurrency(variant.inventory_cost || 0)}
                         </div>
                       )}
                       {loading && <span className="ml-2 text-xs text-blue-400">Saving…</span>}
                       {error && <span className="ml-2 text-xs text-red-400">{error}</span>}
                     </TableCell>
-                    {/* Handling - Not supported at variant level */}
+                    {/* Handling - Show product-level handling fees for variants too */}
                     <TableCell>
-                      <div className="w-28 h-8 flex items-center justify-center text-sm text-gray-500 bg-gray-800 rounded px-2">
-                        —
+                      <div className="w-28 h-8 flex items-center justify-end text-sm text-gray-400 bg-gray-800 rounded px-2">
+                        {formatCurrency(getDisplayedHandlingFees(product))}
                       </div>
                     </TableCell>
                     {/* Misc - Not supported at variant level */}
@@ -591,7 +591,7 @@ export function CostOfGoodsTable({
                     </TableCell>
                     {/* Margin */}
                     <TableCell className="text-sm text-gray-500">
-                      {variant.price > 0 ? (
+                      {variant.price > 0 && variant.inventory_cost > 0 ? (
                         <span className={
                           ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 70 ? 'text-green-400' :
                           ((variant.price - variant.inventory_cost) / variant.price) * 100 >= 50 ? 'text-yellow-400' :

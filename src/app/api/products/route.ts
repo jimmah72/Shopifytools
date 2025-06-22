@@ -255,6 +255,40 @@ async function saveProductAndVariantDataToDatabase(storeId: string, shopifyProdu
   console.log(`Products API - Successfully updated ${productsUpdated} products and created ${variantsCreated} variants`);
 }
 
+// Function to calculate handling fees from additional costs (used in page-level sync)
+async function calculateHandlingFeesFromAdditionalCosts(storeId: string, productPrice: number): Promise<number> {
+  try {
+    // Fetch all active additional costs for the store
+    const additionalCosts = await (prisma as any).additionalCost.findMany({
+      where: { 
+        storeId: storeId,
+        isActive: true 
+      }
+    });
+
+    if (!additionalCosts || additionalCosts.length === 0) {
+      return 0;
+    }
+
+    let totalHandlingFees = 0;
+
+    additionalCosts.forEach((cost: any) => {
+      // Item-level fees (direct application)
+      totalHandlingFees += cost.flatRatePerItem || 0;
+      totalHandlingFees += (cost.percentagePerItem || 0) * productPrice / 100;
+
+      // Order-level fees (applied per item - user requirement)
+      totalHandlingFees += cost.flatRatePerOrder || 0;
+      totalHandlingFees += (cost.percentagePerOrder || 0) * productPrice / 100;
+    });
+
+    return Math.round(totalHandlingFees * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('Error calculating handling fees from additional costs:', error);
+    return 0;
+  }
+}
+
 export async function GET(request: NextRequest) {
   // ✅ ADD: Request tracking to identify duplicate calls
   const requestId = Math.random().toString(36).substring(2, 8);
@@ -483,8 +517,8 @@ export async function GET(request: NextRequest) {
         : product.id;
     });
 
-    // Transform ALL products to our format
-    const transformedProducts = filteredProducts.map((shopifyProduct: ShopifyProduct) => {
+    // Transform ALL products to our format (now async)
+    const transformedProducts = await Promise.all(filteredProducts.map(async (shopifyProduct: ShopifyProduct) => {
       // Extract numeric ID from GraphQL ID format
       const numericId = shopifyProduct.id.includes('gid://shopify/Product/') 
         ? shopifyProduct.id.replace('gid://shopify/Product/', '')
@@ -538,14 +572,22 @@ export async function GET(request: NextRequest) {
         ? shopifyInventoryCost 
         : costOfGoodsSold;
 
-      const totalCost = displayCostOfGoodsSold + handlingFees + miscFees;
+      // ✅ PERFORMANCE: Skip handling fees calculation here - will do it after pagination for current page only
+      const shopifyHandlingFees = 0; // Placeholder - calculated later for displayed products only
+
+      // ✅ FIX: For products with SHOPIFY cost source, use calculated handling fees  
+      const displayHandlingFees = costSource === 'SHOPIFY' 
+        ? shopifyHandlingFees 
+        : handlingFees;
+
+      const totalCost = displayCostOfGoodsSold + displayHandlingFees + miscFees;
       const margin = price > 0 ? ((price - totalCost) / price) * 100 : 0;
       
       // ✅ DEBUG: Log cost data for main products to verify styling logic
       if (shopifyInventoryCost && shopifyInventoryCost > 0) {
         console.log(`💰 Product ${numericId} "${shopifyProduct.title}" - cost: $${shopifyInventoryCost}, source: ${costSource}`);
       }
-
+      
       return {
         id: numericId,
         title: cachedProduct?.title || shopifyProduct.title,
@@ -564,12 +606,12 @@ export async function GET(request: NextRequest) {
         }),
         sellingPrice: price,
         costOfGoodsSold: displayCostOfGoodsSold,
-        handlingFees: handlingFees,
+        handlingFees: displayHandlingFees,
         miscFees: miscFees,
         margin: margin,
         costSource: costSource,
         shopifyCostOfGoodsSold: shopifyInventoryCost || null,
-        shopifyHandlingFees: 0,
+        shopifyHandlingFees: shopifyHandlingFees,
         lastSyncedAt: lastSyncedAt && lastSyncedAt instanceof Date ? lastSyncedAt.toISOString() : null,
         sku: variant?.sku || '',
         inventoryQuantity: variant?.inventory_quantity || 0,
@@ -596,7 +638,7 @@ export async function GET(request: NextRequest) {
           };
         }).filter(Boolean) // Remove any null entries
       };
-    });
+    }));
 
     // Apply additional filters
     let filteredAndTransformedProducts = transformedProducts;
@@ -682,6 +724,25 @@ export async function GET(request: NextRequest) {
     const endIndex = startIndex + limit;
     const paginatedProducts = filteredAndTransformedProducts.slice(startIndex, endIndex);
 
+    // ✅ PERFORMANCE: Use cached handling fees from database (calculated during sync)
+    for (const product of paginatedProducts) {
+      // ✅ DEBUG: Log all products to see what's different about Custom 3D Wedding Welcome Sign
+      console.log(`🔍 Product ${product.id} "${product.title}" - Source: ${product.costSource}, Cost: $${product.costOfGoodsSold}, ShopifyCost: $${product.shopifyCostOfGoodsSold || 'null'}`);
+      
+      if (product.costSource === 'SHOPIFY') {
+        // ✅ Use cached handling fees from database (calculated during sync)
+        // No more per-request calculation - much more efficient!
+        const cachedHandlingFees = product.handlingFees; // Already loaded from database
+        product.shopifyHandlingFees = cachedHandlingFees;
+        
+        // Recalculate total cost and margin with cached handling fees
+        const totalCost = product.costOfGoodsSold + cachedHandlingFees + product.miscFees;
+        product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+        
+        console.log(`💰 Using cached handling fees for "${product.title}": $${cachedHandlingFees} (no calculation needed)`);
+      }
+    }
+
     console.log('Products API - Pagination:', {
       totalProducts,
       totalPages,
@@ -717,14 +778,18 @@ export async function GET(request: NextRequest) {
         // Save cost data to database
         await saveCostDataToDatabase(store.id, pageCostData, productsNeedingSync);
         
-        // ✅ FIX: For page sync, also update main Product table with variant costs
+        // ✅ FIX: For page sync, also update main Product table with variant costs AND handling fees
         if (forceSync) {
-          console.log(`Products API - Updating main Product table for ${productsNeedingSync.length} products with variant costs`);
+          console.log(`Products API - Updating main Product table for ${productsNeedingSync.length} products with variant costs and handling fees`);
           for (const productId of productsNeedingSync) {
             const shopifyProduct = shopifyProductsMap.get(productId);
             if (shopifyProduct?.variants && shopifyProduct.variants.length > 0) {
               const firstVariant = shopifyProduct.variants[0];
               const variantCost = firstVariant?.costPerItem || pageCostData[productId];
+              const variantPrice = firstVariant?.price || 0;
+              
+              // ✅ NEW: Calculate handling fees for this product during page sync
+              const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, variantPrice);
               
               if (variantCost && variantCost > 0) {
                 try {
@@ -732,21 +797,27 @@ export async function GET(request: NextRequest) {
                     where: { shopifyId: productId },
                     update: { 
                       costOfGoodsSold: variantCost,
-                      costSource: 'SHOPIFY'
+                      handlingFees: calculatedHandlingFees, // ✅ NEW: Update handling fees
+                      costSource: 'SHOPIFY',
+                      price: variantPrice,
+                      sellingPrice: variantPrice,
+                      title: shopifyProduct.title
                     },
                     create: {
                       shopifyId: productId,
                       storeId: store.id,
                       title: shopifyProduct.title || `Product ${productId}`,
                       description: '',
-                      price: firstVariant?.price || 0,
+                      price: variantPrice,
+                      sellingPrice: variantPrice,
                       cost: variantCost,
                       costOfGoodsSold: variantCost,
+                      handlingFees: calculatedHandlingFees, // ✅ NEW: Set handling fees
                       costSource: 'SHOPIFY',
                       sku: firstVariant?.sku || ''
                     }
                   });
-                  console.log(`Products API - Updated main Product ${productId} with variant cost $${variantCost}`);
+                  console.log(`Products API - Updated main Product ${productId} with variant cost $${variantCost} and handling fees $${calculatedHandlingFees}`);
                 } catch (error) {
                   console.error(`Products API - Error updating main Product ${productId}:`, error);
                 }
@@ -778,7 +849,7 @@ export async function GET(request: NextRequest) {
         console.log(`Products API - Refreshed sync timestamps for ${updatedSyncStatus.length} products`);
         
         // Apply cost data to current page products
-        paginatedProducts.forEach((product: any) => {
+        for (const product of paginatedProducts) {
           const shopifyInventoryCost = pageCostData[product.id];
           
           // Update the transformed product's shopify cost data
@@ -788,13 +859,40 @@ export async function GET(request: NextRequest) {
           const shopifyProduct = shopifyProductsMap.get(product.id);
           product.lastSyncedAt = shopifyProduct?.lastSyncedAt instanceof Date ? shopifyProduct.lastSyncedAt.toISOString() : null;
           
-          // If cost source is SHOPIFY, update the cost of goods sold
+          // ✅ FIX: For SHOPIFY products, ensure we use FIRST variant cost for consistency with price
           if (product.costSource === 'SHOPIFY') {
-            product.costOfGoodsSold = shopifyInventoryCost || 0;
+            // Try to get first variant cost from cached data first (more reliable ordering)
+            let firstVariantCost = null;
+            if (shopifyProduct?.variants && shopifyProduct.variants.length > 0) {
+              firstVariantCost = shopifyProduct.variants[0]?.costPerItem;
+            }
+            
+            // Use first variant cost if available, otherwise fall back to pageCostData
+            const consistentCost = firstVariantCost || shopifyInventoryCost || 0;
+            product.costOfGoodsSold = consistentCost;
+            product.shopifyCostOfGoodsSold = consistentCost;
+            
+            // ✅ NEW: If this product was just synced, get fresh handling fees from database
+            if (forceSync && productsNeedingSync.includes(product.id)) {
+              const freshProduct = await prisma.product.findUnique({
+                where: { shopifyId: product.id },
+                select: { handlingFees: true }
+              });
+              
+              if (freshProduct) {
+                product.handlingFees = freshProduct.handlingFees;
+                product.shopifyHandlingFees = freshProduct.handlingFees;
+                console.log(`💰 Updated handling fees for "${product.title}": $${freshProduct.handlingFees} (freshly calculated)`);
+              }
+            }
+            
+            // ✅ FIX: Recalculate margin with correct costs including handling fees
             const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
             product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+            
+            console.log(`✅ Product ${product.id} consistency fix - Price: $${product.sellingPrice}, Cost: $${product.costOfGoodsSold}, Handling: $${product.handlingFees}, Margin: ${product.margin.toFixed(2)}%`);
           }
-        });
+        }
       } else {
         console.log(`Products API - All ${pageProductIds.length} products already have fresh cost data`);
       }

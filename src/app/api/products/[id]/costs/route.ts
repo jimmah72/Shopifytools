@@ -1,6 +1,40 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+// Function to calculate handling fees from additional costs
+async function calculateHandlingFeesFromAdditionalCosts(storeId: string, productPrice: number): Promise<number> {
+  try {
+    // Fetch all active additional costs for the store
+    const additionalCosts = await (prisma as any).additionalCost.findMany({
+      where: { 
+        storeId: storeId,
+        isActive: true 
+      }
+    });
+
+    if (!additionalCosts || additionalCosts.length === 0) {
+      return 0;
+    }
+
+    let totalHandlingFees = 0;
+
+    additionalCosts.forEach((cost: any) => {
+      // Item-level fees (direct application)
+      totalHandlingFees += cost.flatRatePerItem || 0;
+      totalHandlingFees += (cost.percentagePerItem || 0) * productPrice / 100;
+
+      // Order-level fees (applied per item - user requirement)
+      totalHandlingFees += cost.flatRatePerOrder || 0;
+      totalHandlingFees += (cost.percentagePerOrder || 0) * productPrice / 100;
+    });
+
+    return Math.round(totalHandlingFees * 100) / 100; // Round to 2 decimal places
+  } catch (error) {
+    console.error('Error calculating handling fees from additional costs:', error);
+    return 0;
+  }
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
@@ -32,7 +66,59 @@ export async function PATCH(
     if (costSource !== undefined) updateData.costSource = costSource;
     updateData.lastEdited = new Date();
 
-    console.log('Product Costs API - Update data prepared:', updateData);
+    // ✅ NEW: If switching to SHOPIFY mode, fetch and populate Shopify cost data
+    if (costSource === 'SHOPIFY') {
+      console.log('Product Costs API - Switching to SHOPIFY mode, fetching Shopify data...');
+      
+      // Get Shopify product data
+      const shopifyProduct = await (prisma as any).shopifyProduct.findUnique({
+        where: { id: shopifyProductId },
+        include: {
+          variants: {
+            orderBy: { id: 'asc' }, // Get consistent first variant
+            take: 1 // Just get the first variant for cost
+          }
+        }
+      });
+
+      if (shopifyProduct && shopifyProduct.variants.length > 0) {
+        const firstVariant = shopifyProduct.variants[0];
+        const shopifyPrice = firstVariant.price || 0;
+        const shopifyCost = firstVariant.costPerItem || 0;
+        
+        // Calculate handling fees based on Shopify price
+        const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, shopifyPrice);
+        
+        // Update data with Shopify values
+        updateData.price = shopifyPrice;
+        updateData.sellingPrice = shopifyPrice;
+        updateData.costOfGoodsSold = shopifyCost;
+        updateData.handlingFees = calculatedHandlingFees;
+        updateData.title = shopifyProduct.title;
+        updateData.status = shopifyProduct.status || 'active';
+        
+        console.log('Product Costs API - Populated Shopify data:', {
+          price: shopifyPrice,
+          cost: shopifyCost,
+          handlingFees: calculatedHandlingFees,
+          title: shopifyProduct.title
+        });
+      } else {
+        console.log('Product Costs API - No Shopify product/variant data found, using defaults');
+        // Calculate handling fees based on current price if available
+        const existingProduct = await prisma.product.findUnique({
+          where: { shopifyId: shopifyProductId }
+        });
+        
+        if (existingProduct && existingProduct.sellingPrice > 0) {
+          const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, existingProduct.sellingPrice);
+          updateData.handlingFees = calculatedHandlingFees;
+          console.log('Product Costs API - Calculated handling fees for existing price:', calculatedHandlingFees);
+        }
+      }
+    }
+
+    console.log('Product Costs API - Final update data prepared:', updateData);
 
     // Check if product already exists
     const existingProduct = await prisma.product.findUnique({
