@@ -42,9 +42,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { storeId, name, baseRate, perItemRate, weightRate } = body
+    const { storeId, name, cost, condition } = body
 
-    if (!storeId || !name || baseRate === undefined || perItemRate === undefined) {
+    if (!storeId || !name || cost === undefined) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -55,9 +55,8 @@ export async function POST(request: NextRequest) {
       data: {
         storeId,
         name,
-        baseRate,
-        perItemRate,
-        weightRate,
+        cost,
+        condition,
       },
     })
 
@@ -74,7 +73,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { id, name, baseRate, perItemRate, weightRate } = body
+    const { id, name, cost, condition } = body
 
     if (!id) {
       return NextResponse.json(
@@ -87,9 +86,8 @@ export async function PUT(request: NextRequest) {
       where: { id },
       data: {
         name,
-        baseRate,
-        perItemRate,
-        weightRate,
+        cost,
+        condition,
       },
     })
 
