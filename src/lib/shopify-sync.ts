@@ -10,6 +10,7 @@ interface SyncResult {
   newOrders: number
   updatedOrders: number
   error?: string
+  message?: string
 }
 
 // Rate limiting and circuit breaker configuration
@@ -393,7 +394,8 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
     success: false,
     ordersProcessed: 0,
     newOrders: 0,
-    updatedOrders: 0
+    updatedOrders: 0,
+    message: ''
   }
 
   try {
@@ -593,12 +595,12 @@ export async function syncShopifyProducts(storeId: string): Promise<SyncResult> 
         lastSyncAt: latestProductDate,
         syncInProgress: false,
         totalRecords: syncStatus.totalRecords + result.newOrders,
-        errorMessage: result.message.length > 0 ? result.message : null
+        errorMessage: result.message && result.message.length > 0 ? result.message : null
       }
     })
 
     result.success = true
-    console.log(`Sync Service - Products sync completed. New: ${result.newOrders}, Updated: ${result.updatedOrders}, Errors: ${result.message.length}`)
+    console.log(`Sync Service - Products sync completed. New: ${result.newOrders}, Updated: ${result.updatedOrders}, Errors: ${result.message?.length || 0}`)
 
   } catch (error) {
     console.error('Sync Service - Products sync failed:', error)
