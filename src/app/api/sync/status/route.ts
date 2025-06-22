@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getOrdersCount } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
+import { cleanupStuckSyncs } from '@/lib/sync-cleanup'
 
 export async function GET(request: NextRequest) {
   console.log('Sync Status API - GET request received')
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if sync is currently active and get its timeframe
-    const activeOrdersSync = await prisma.syncStatus.findFirst({
+    const activeOrdersSync = await (prisma as any).syncStatus.findFirst({
       where: {
         storeId,
         dataType: 'orders',
@@ -122,12 +123,37 @@ export async function GET(request: NextRequest) {
     const ordersSyncStatus = syncStatuses.find(s => s.dataType === 'orders')
     const productsSyncStatus = syncStatuses.find(s => s.dataType === 'products')
 
-    // ✅ FIXED: sync is active only when actually running, not just when sync is needed
-    const isSyncActive = ordersSyncStatus?.syncInProgress || false
+    // ✅ AUTO-CLEANUP: Check if sync is complete but stuck with syncInProgress=true
+    let isSyncActive = ordersSyncStatus?.syncInProgress || false
+    
+    // If sync shows as active but progress is 100%, it's likely stuck - clean it up
+    if (isSyncActive && syncProgress >= 100 && totalOrdersFromShopify > 0) {
+      console.log(`🔧 Sync Status API - Detected completed but stuck sync (${syncProgress}%), triggering cleanup...`)
+      try {
+        const cleanupResult = await cleanupStuckSyncs()
+        console.log(`✅ Sync Status API - Cleanup result:`, cleanupResult)
+        
+        // Refresh sync status after cleanup
+        const refreshedOrdersSync = await (prisma as any).syncStatus.findFirst({
+          where: {
+            storeId,
+            dataType: 'orders',
+            syncInProgress: true
+          }
+        })
+        
+        isSyncActive = refreshedOrdersSync?.syncInProgress || false
+        console.log(`🔄 Sync Status API - After cleanup, isSyncActive: ${isSyncActive}`)
+      } catch (cleanupError) {
+        console.error('❌ Sync Status API - Cleanup failed:', cleanupError)
+        // Continue with original status if cleanup fails
+      }
+    }
+    
     const syncNeeded = syncProgress < 100 && !isSyncActive
 
     // Get product counts
-    const localProductsCount = await prisma.shopifyProduct.count({
+    const localProductsCount = await (prisma as any).shopifyProduct.count({
       where: { storeId }
     })
 

@@ -8,8 +8,16 @@ export const fetchCache = 'force-no-store';
 export async function GET() {
   console.log('Store API - GET request received')
   try {
-    console.log('Store API - Attempting to find first store')
-    const store = await prisma.store.findFirst({
+    console.log('Store API - Attempting to find active store with real connection')
+    
+    // First, try to find an active store with a real access token (not placeholder)
+    let store = await prisma.store.findFirst({
+      where: {
+        isActive: true,
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
       include: {
         _count: {
           select: {
@@ -18,7 +26,49 @@ export async function GET() {
           },
         },
       },
+      orderBy: {
+        updatedAt: 'desc' // Get the most recently updated store
+      }
     })
+
+    // If no active store with real token, fall back to any active store
+    if (!store) {
+      console.log('Store API - No active store with real token found, trying any active store')
+      store = await prisma.store.findFirst({
+        where: {
+          isActive: true
+        },
+        include: {
+          _count: {
+            select: {
+              products: true,
+              orders: true,
+            },
+          },
+        },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      })
+    }
+
+    // Last resort: any store at all
+    if (!store) {
+      console.log('Store API - No active store found, trying any store')
+      store = await prisma.store.findFirst({
+        include: {
+          _count: {
+            select: {
+              products: true,
+              orders: true,
+            },
+          },
+        },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      })
+    }
 
     console.log('Store API - Found store:', store)
 
@@ -79,34 +129,55 @@ export async function PUT(request: NextRequest) {
 export async function DELETE() {
   console.log('Store API - DELETE request received')
   try {
-    console.log('Store API - Attempting to find and delete store')
+    console.log('Store API - Attempting to find active store to archive')
     
-    const store = await prisma.store.findFirst()
+    // Find the active store (prioritize real connections)
+    let store = await prisma.store.findFirst({
+      where: {
+        isActive: true,
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    })
+
+    if (!store) {
+      store = await prisma.store.findFirst({
+        where: {
+          isActive: true
+        },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      })
+    }
     
     if (!store) {
-      console.log('Store API - No store found to delete')
+      console.log('Store API - No active store found to disconnect')
       return NextResponse.json(
-        { message: 'No store found to disconnect' },
+        { message: 'No active store found to disconnect' },
         { status: 404 }
       )
     }
 
-    console.log('Store API - Deleting store and all related data:', store.id)
+    console.log('Store API - Archiving store instead of deleting to preserve data:', store.id)
     
-    // Delete products first to resolve foreign key constraints
-    await prisma.product.deleteMany({
-      where: { storeId: store.id }
-    })
-    
-    // Then delete the store
-    await prisma.store.delete({
-      where: { id: store.id }
+    // Archive the store instead of deleting to preserve all data
+    const archivedStore = await prisma.store.update({
+      where: { id: store.id },
+      data: {
+        isActive: false,
+        isArchived: true
+      }
     })
 
-    console.log('Store API - Store and all related data deleted successfully')
+    console.log('Store API - Store archived successfully, all data preserved')
     return NextResponse.json({ 
-      message: 'Store disconnected successfully',
-      deletedStoreId: store.id 
+      message: 'Store disconnected successfully (archived to preserve data)',
+      archivedStoreId: archivedStore.id 
     })
   } catch (error) {
     console.error('Store API - Error disconnecting store:', error)

@@ -196,10 +196,29 @@ let syncStatus = {
 };
 
 export async function POST(request: NextRequest) {
+  const timestamp = new Date().toISOString()
+  const requestHeaders = request.headers
+  const userAgent = requestHeaders.get('user-agent') || 'unknown'
+  const referer = requestHeaders.get('referer') || 'unknown'
+  const origin = requestHeaders.get('origin') || 'unknown'
+  
+  console.log('🚀 SYNC TRIGGER DETECTED - Products Sync API')
+  console.log(`📅 Timestamp: ${timestamp}`)
+  console.log(`🌐 User-Agent: ${userAgent}`)
+  console.log(`🔗 Referer: ${referer}`)
+  console.log(`📍 Origin: ${origin}`)
+  
   try {
     const body: SyncRequest = await request.json();
     
+    // Log detailed trigger information
+    console.log('🔍 PRODUCTS SYNC TRIGGER DETAILS:')
+    console.log(`   🎯 Sync Type: ${body.type}`)
+    console.log(`   📍 Priority: ${body.priority || 'not specified'}`)
+    console.log(`   📦 Request Body:`, JSON.stringify(body, null, 2))
+    
     if (syncInProgress) {
+      console.log('⚠️ SYNC TRIGGER REJECTED - Sync already in progress')
       return NextResponse.json(
         { error: 'Sync already in progress' },
         { status: 409 }

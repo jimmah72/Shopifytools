@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -226,6 +226,42 @@ export default function FeesPage() {
       setError('Failed to update fee configuration');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Debounced version of handleBasicFeeUpdate for input fields
+  const debouncedUpdate = useCallback(
+    debounce((field: string, value: number | boolean) => {
+      handleBasicFeeUpdate(field, value);
+    }, 1000),
+    [feeConfig, store?.id]
+  );
+
+  // Helper function for debouncing
+  function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+    let timeout: NodeJS.Timeout;
+    return ((...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    }) as T;
+  }
+
+  // Handle input changes with local state
+  const handleInputChange = (field: string, inputValue: string, isPercentage = false) => {
+    // Update local input state immediately
+    setInputValues(prev => ({ ...prev, [field]: inputValue }));
+    
+    // Parse and validate the value
+    let numericValue: number;
+    if (isPercentage) {
+      numericValue = parseFloat(inputValue) / 100;
+    } else {
+      numericValue = parseFloat(inputValue);
+    }
+    
+    // Only update if the value is valid
+    if (!isNaN(numericValue) && numericValue >= 0) {
+      debouncedUpdate(field, numericValue);
     }
   };
 
@@ -551,38 +587,46 @@ export default function FeesPage() {
                   <Grid container spacing={2}>
                     <Grid item xs={12} md={6}>
                       <TextField
-                                              fullWidth
-                      label="Payment Gateway Rate"
-                      type="number"
-                      value={(feeConfig.paymentGatewayRate * 100).toFixed(2)}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value) / 100;
-                        handleBasicFeeUpdate('paymentGatewayRate', value);
-                      }}
-                      InputProps={{
-                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
-                      }}
-                      inputProps={{ step: '0.01', min: '0', max: '100' }}
-                      helperText="Standard payment processing rate"
-                      disabled={saving}
+                        fullWidth
+                        label="Payment Gateway Rate"
+                        type="number"
+                        value={inputValues.paymentGatewayRate || (feeConfig.paymentGatewayRate * 100).toFixed(2)}
+                        onChange={(e) => handleInputChange('paymentGatewayRate', e.target.value, true)}
+                        onBlur={(e) => {
+                          // Ensure we have the latest value on blur
+                          const value = parseFloat(e.target.value) / 100;
+                          if (!isNaN(value) && value >= 0) {
+                            handleBasicFeeUpdate('paymentGatewayRate', value);
+                          }
+                        }}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                        }}
+                        inputProps={{ step: '0.01', min: '0', max: '100' }}
+                        helperText="Standard payment processing rate"
+                        disabled={saving}
                       />
                     </Grid>
                     <Grid item xs={12} md={6}>
                       <TextField
-                                              fullWidth
-                      label="Processing Fee Per Order"
-                      type="number"
-                      value={feeConfig.processingFeePerOrder.toFixed(2)}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value);
-                        handleBasicFeeUpdate('processingFeePerOrder', value);
-                      }}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
-                      }}
-                      inputProps={{ step: '0.01', min: '0' }}
-                      helperText="Fixed fee per transaction"
-                      disabled={saving}
+                        fullWidth
+                        label="Processing Fee Per Order"
+                        type="number"
+                        value={inputValues.processingFeePerOrder || feeConfig.processingFeePerOrder.toFixed(2)}
+                        onChange={(e) => handleInputChange('processingFeePerOrder', e.target.value, false)}
+                        onBlur={(e) => {
+                          // Ensure we have the latest value on blur
+                          const value = parseFloat(e.target.value);
+                          if (!isNaN(value) && value >= 0) {
+                            handleBasicFeeUpdate('processingFeePerOrder', value);
+                          }
+                        }}
+                        InputProps={{
+                          startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                        }}
+                        inputProps={{ step: '0.01', min: '0' }}
+                        helperText="Fixed fee per transaction"
+                        disabled={saving}
                       />
                     </Grid>
                   </Grid>
@@ -662,10 +706,13 @@ export default function FeesPage() {
                       fullWidth
                       label="Default COG Rate"
                       type="number"
-                      value={(feeConfig.defaultCogRate * 100).toFixed(1)}
-                      onChange={(e) => {
+                      value={inputValues.defaultCogRate || (feeConfig.defaultCogRate * 100).toFixed(1)}
+                      onChange={(e) => handleInputChange('defaultCogRate', e.target.value, true)}
+                      onBlur={(e) => {
                         const value = parseFloat(e.target.value) / 100;
-                        handleBasicFeeUpdate('defaultCogRate', value);
+                        if (!isNaN(value) && value >= 0) {
+                          handleBasicFeeUpdate('defaultCogRate', value);
+                        }
                       }}
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
@@ -680,10 +727,13 @@ export default function FeesPage() {
                       fullWidth
                       label="Chargeback Rate"
                       type="number"
-                      value={(feeConfig.chargebackRate * 100).toFixed(2)}
-                      onChange={(e) => {
+                      value={inputValues.chargebackRate || (feeConfig.chargebackRate * 100).toFixed(2)}
+                      onChange={(e) => handleInputChange('chargebackRate', e.target.value, true)}
+                      onBlur={(e) => {
                         const value = parseFloat(e.target.value) / 100;
-                        handleBasicFeeUpdate('chargebackRate', value);
+                        if (!isNaN(value) && value >= 0) {
+                          handleBasicFeeUpdate('chargebackRate', value);
+                        }
                       }}
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,
@@ -698,10 +748,13 @@ export default function FeesPage() {
                       fullWidth
                       label="Return Processing Rate"
                       type="number"
-                      value={(feeConfig.returnProcessingRate * 100).toFixed(2)}
-                      onChange={(e) => {
+                      value={inputValues.returnProcessingRate || (feeConfig.returnProcessingRate * 100).toFixed(2)}
+                      onChange={(e) => handleInputChange('returnProcessingRate', e.target.value, true)}
+                      onBlur={(e) => {
                         const value = parseFloat(e.target.value) / 100;
-                        handleBasicFeeUpdate('returnProcessingRate', value);
+                        if (!isNaN(value) && value >= 0) {
+                          handleBasicFeeUpdate('returnProcessingRate', value);
+                        }
                       }}
                       InputProps={{
                         endAdornment: <InputAdornment position="end">%</InputAdornment>,

@@ -53,10 +53,49 @@ export async function GET(request: NextRequest) {
     const timeframe = searchParams.get('timeframe') || '30d'
     const fulfillmentStatus = searchParams.get('fulfillmentStatus') || 'all'
     
-    // Get the first store from the database
-    const store = await prisma.store.findFirst({
-      select: { id: true, domain: true, accessToken: true }
+    // ✅ FIX: Use smart store selection (prioritize active stores with real tokens)
+    console.log('Dashboard API - Finding active store with real connection')
+    
+    // First, try to find an active store with a real access token (not placeholder)
+    let store = await prisma.store.findFirst({
+      where: {
+        isActive: true,
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
+      select: { id: true, domain: true, accessToken: true },
+      orderBy: {
+        updatedAt: 'desc' // Get the most recently updated store
+      }
     })
+
+    // If no active store with real token, fall back to any active store
+    if (!store) {
+      console.log('Dashboard API - No active store with real token found, trying any active store')
+      store = await prisma.store.findFirst({
+        where: {
+          isActive: true
+        },
+        select: { id: true, domain: true, accessToken: true },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      })
+    }
+
+    // Last resort: any store at all
+    if (!store) {
+      console.log('Dashboard API - No active store found, trying any store')
+      store = await prisma.store.findFirst({
+        select: { id: true, domain: true, accessToken: true },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      })
+    }
+
+    console.log('Dashboard API - Selected store:', { id: store?.id, domain: store?.domain })
 
     if (!store) {
       return NextResponse.json(

@@ -3,11 +3,29 @@ import { prisma } from '@/lib/prisma'
 import { syncAllData, syncShopifyOrders, syncShopifyProducts } from '@/lib/shopify-sync'
 
 export async function POST(request: NextRequest) {
-  console.log('Sync API - POST request received')
+  const timestamp = new Date().toISOString()
+  const requestHeaders = request.headers
+  const userAgent = requestHeaders.get('user-agent') || 'unknown'
+  const referer = requestHeaders.get('referer') || 'unknown'
+  const origin = requestHeaders.get('origin') || 'unknown'
+  
+  console.log('🚀 SYNC TRIGGER DETECTED - Main Sync API')
+  console.log(`📅 Timestamp: ${timestamp}`)
+  console.log(`🌐 User-Agent: ${userAgent}`)
+  console.log(`🔗 Referer: ${referer}`)
+  console.log(`📍 Origin: ${origin}`)
   
   try {
     const body = await request.json()
-    const { storeId, dataType = 'all', timeframeDays = 30 } = body
+    const { storeId, dataType = 'all', timeframeDays = 30, triggerReason, triggerSource } = body
+    
+    // Log detailed trigger information
+    console.log('🔍 SYNC TRIGGER DETAILS:')
+    console.log(`   📊 Data Type: ${dataType}`)
+    console.log(`   📅 Timeframe: ${timeframeDays} days`)
+    console.log(`   🎯 Trigger Reason: ${triggerReason || 'not specified'}`)
+    console.log(`   📍 Trigger Source: ${triggerSource || 'not specified'}`)
+    console.log(`   📦 Request Body:`, JSON.stringify(body, null, 2))
 
     // Get store ID if not provided
     let targetStoreId = storeId

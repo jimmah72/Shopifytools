@@ -1,9 +1,20 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { syncShopifyOrders } from '@/lib/shopify-sync'
 
-export async function POST() {
-  console.log('Resume Sync API - POST request received')
+export async function POST(request: NextRequest) {
+  const timestamp = new Date().toISOString()
+  const requestHeaders = request.headers
+  const userAgent = requestHeaders.get('user-agent') || 'unknown'
+  const referer = requestHeaders.get('referer') || 'unknown'
+  const origin = requestHeaders.get('origin') || 'unknown'
+  
+  console.log('🚀 SYNC TRIGGER DETECTED - Resume Sync API')
+  console.log(`📅 Timestamp: ${timestamp}`)
+  console.log(`🌐 User-Agent: ${userAgent}`)
+  console.log(`🔗 Referer: ${referer}`)
+  console.log(`📍 Origin: ${origin}`)
+  console.log('🔍 RESUME SYNC TRIGGER - Attempting to resume interrupted sync')
   
   try {
     // Find stuck syncs (heartbeat older than 5 minutes)

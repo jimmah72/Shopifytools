@@ -34,23 +34,41 @@ class ProductSyncScheduler {
   }
 
   private async triggerAutoSync(): Promise<void> {
+    const timestamp = new Date().toISOString()
+    
     try {
-      console.log('Product Sync Scheduler - Triggering auto sync at 6am CST');
+      console.log('🚀 SYNC TRIGGER DETECTED - Auto Scheduler (6am CST)')
+      console.log(`📅 Timestamp: ${timestamp}`)
+      console.log('🔍 SCHEDULER TRIGGER DETAILS:')
+      console.log('   🎯 Trigger Reason: Daily auto-sync at 6am CST')
+      console.log('   📍 Trigger Source: ProductSyncScheduler')
+      console.log('   🤖 Trigger Type: Automated')
       
       // Check if changes were made in the last 24 hours
       const hasChanges = await this.checkForRecentChanges();
       
       if (!hasChanges) {
-        console.log('Product Sync Scheduler - No recent changes detected, skipping sync');
+        console.log('❌ SCHEDULER SYNC SKIPPED - No recent changes detected in last 24 hours');
         this.scheduleNextSync();
         return;
       }
       
+      console.log('✅ SCHEDULER SYNC PROCEEDING - Recent changes detected, triggering sync');
+      
       // Trigger the sync via API call
       const response = await fetch('/api/products/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'auto' })
+        headers: { 
+          'Content-Type': 'application/json',
+          'User-Agent': 'ProductSyncScheduler/1.0 (auto-scheduler)',
+          'X-Trigger-Source': 'scheduler',
+          'X-Trigger-Reason': 'daily-auto-sync'
+        },
+        body: JSON.stringify({ 
+          type: 'auto',
+          triggerReason: 'Daily auto-sync at 6am CST',
+          triggerSource: 'ProductSyncScheduler'
+        })
       });
       
       if (response.ok) {

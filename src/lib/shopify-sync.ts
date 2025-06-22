@@ -425,7 +425,14 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
   return result
 }
 
-export async function syncShopifyProducts(storeId: string): Promise<SyncResult> {
+export async function syncShopifyProducts(storeId: string, triggerInfo?: { reason?: string, source?: string }): Promise<SyncResult> {
+  const timestamp = new Date().toISOString()
+  
+  console.log('🔥 PRODUCTS SYNC FUNCTION CALLED')
+  console.log(`📅 Timestamp: ${timestamp}`)
+  console.log(`🏪 Store ID: ${storeId}`)
+  console.log(`🎯 Trigger Reason: ${triggerInfo?.reason || 'not specified'}`)
+  console.log(`📍 Trigger Source: ${triggerInfo?.source || 'not specified'}`)
   console.log(`Sync Service - Starting products sync for store: ${storeId}`)
   
   const result: SyncResult = {

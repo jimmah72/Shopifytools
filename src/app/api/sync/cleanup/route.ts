@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cleanupStuckSyncs, findStuckSyncs } from '@/lib/sync-cleanup'
 
 export async function POST(request: NextRequest) {
-  console.log('Sync Cleanup - POST request received (manual cleanup)')
+  const timestamp = new Date().toISOString()
+  const requestHeaders = request.headers
+  const userAgent = requestHeaders.get('user-agent') || 'unknown'
+  const referer = requestHeaders.get('referer') || 'unknown'
+  const origin = requestHeaders.get('origin') || 'unknown'
+  
+  console.log('🚀 SYNC TRIGGER DETECTED - Cleanup API')
+  console.log(`📅 Timestamp: ${timestamp}`)
+  console.log(`🌐 User-Agent: ${userAgent}`)
+  console.log(`🔗 Referer: ${referer}`)
+  console.log(`📍 Origin: ${origin}`)
+  console.log('🔍 CLEANUP TRIGGER - Manual sync cleanup requested')
   
   try {
     const result = await cleanupStuckSyncs()

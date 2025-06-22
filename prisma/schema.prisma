@@ -12,8 +12,16 @@ model Store {
   name                 String
   domain               String                @unique
   accessToken          String
+  isActive             Boolean               @default(true)  // NEW: Soft delete flag
+  isArchived           Boolean               @default(false) // NEW: Archive instead of delete
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
+  
+  // NEW: Multi-store relationships
+  userAccess           UserStoreAccess[]     // NEW: Many-to-many with users
+  currentUsers         User[]                @relation("UserCurrentStore") // NEW: Users who have this as current store
+  
+  // Existing relationships preserved
   adSpends             AdSpend[]
   adSpendIntegrations  AdSpendIntegration[]
   fixedCosts           FixedCost[]
@@ -32,8 +40,66 @@ model Store {
   syncStatuses         SyncStatus[]
   paymentMethodFees    PaymentMethodFee[]
   
-  // User management
-  users                User[]
+  // User management (existing)
+  users                User[]                @relation("UserStore") // EXISTING: Keep for backward compatibility
+  
+  @@index([isActive])      // NEW
+  @@index([isArchived])    // NEW
+  @@index([domain])        // NEW
+}
+
+// NEW: Junction table for user-store access with per-store roles
+model UserStoreAccess {
+  id          String   @id @default(uuid())
+  userId      String
+  storeId     String
+  role        String   // ADMIN, SELLER, VIEWER - per store basis
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, storeId])
+  @@index([userId])
+  @@index([storeId])
+  @@index([userId, isActive])
+  @@index([role])
+}
+
+model User {
+  id              String   @id @default(uuid())
+  storeId         String   // EXISTING: Keep for backward compatibility
+  username        String   @unique
+  password        String
+  email           String?
+  firstName       String?
+  lastName        String?
+  role            String   // EXISTING: Keep for backward compatibility
+  isActive        Boolean  @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  createdBy       String?
+  
+  // NEW: Current store selection for UI (session state)
+  currentStoreId  String?
+  currentStore    Store?   @relation("UserCurrentStore", fields: [currentStoreId], references: [id])
+  
+  // NEW: Many-to-many relationship with stores
+  storeAccess     UserStoreAccess[]
+  
+  // EXISTING: Keep for backward compatibility
+  store           Store    @relation("UserStore", fields: [storeId], references: [id])
+  
+  @@index([username])
+  @@index([role])
+  @@index([storeId])
+  @@index([storeId, isActive])
+  @@index([currentStoreId])    // NEW
+  @@index([isActive])          // NEW
 }
 
 model Product {
@@ -88,165 +154,142 @@ model ProductVariant {
   @@index([productId])
 }
 
-model ShippingRule {
-  id          String    @id @default(cuid())
-  storeId     String
-  name        String
-  baseRate    Float
-  perItemRate Float
-  weightRate  Float?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  orders      Order[]
-  products    Product[]
-  store       Store     @relation(fields: [storeId], references: [id])
-
-  @@index([storeId])
-}
-
-model PaymentGateway {
-  id            String   @id @default(cuid())
-  storeId       String
-  name          String
-  fixedFee      Float
-  percentageFee Float
-  externalFee   Float
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  orders        Order[]
-  store         Store    @relation(fields: [storeId], references: [id])
-
-  @@index([storeId])
-}
-
 model Order {
-  id                String         @id @default(cuid())
-  storeId           String
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  customerId        String?
-  fulfillmentStatus String         @default("UNFULFILLED")
-  status            String         @default("ACTIVE")
-  adSpend           Float          @default(0)
-  cost              Float
-  price             Float
-  productId         String
-  quantity          Int
-  externalFee       Float
-  fixedFee          Float
-  paymentGatewayId  String
-  percentageFee     Float
-  shippingCost      Float
-  shippingRuleId    String
-  variantId         String
-  customer          Customer?      @relation(fields: [customerId], references: [id])
-  paymentGateway    PaymentGateway @relation(fields: [paymentGatewayId], references: [id])
-  product           Product        @relation(fields: [productId], references: [id])
-  shippingRule      ShippingRule   @relation(fields: [shippingRuleId], references: [id])
-  store             Store          @relation(fields: [storeId], references: [id])
-  variant           ProductVariant @relation(fields: [variantId], references: [id])
-  orderItems        OrderItem[]
+  id                    String           @id @default(cuid())
+  storeId               String
+  orderNumber           String?
+  orderName             String?
+  status                String
+  customerName          String?
+  customerEmail         String?
+  totalAmount           Float
+  costOfGoodsSold       Float            @default(0)
+  shippingCost          Float            @default(0)
+  profit                Float            @default(0)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  productId             String?
+  margin                Float            @default(0)
+  orderDate             DateTime?
+  productVariantId      String?
+  orderItems            OrderItem[]
+  product               Product?         @relation(fields: [productId], references: [id])
+  productVariant        ProductVariant?  @relation(fields: [productVariantId], references: [id])
+  store                 Store            @relation(fields: [storeId], references: [id])
 
-  @@index([productId])
-  @@index([variantId])
   @@index([storeId])
-  @@index([customerId])
-  @@index([shippingRuleId])
-  @@index([paymentGatewayId])
-}
-
-model Customer {
-  id        String   @id @default(uuid())
-  firstName String
-  lastName  String
-  email     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders    Order[]
+  @@index([productId])
+  @@index([productVariantId])
+  @@index([orderDate])
 }
 
 model OrderItem {
-  id        String   @id @default(uuid())
+  id        String  @id @default(cuid())
   orderId   String
   productId String
   quantity  Int
   price     Float
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  order     Order    @relation(fields: [orderId], references: [id])
-  product   Product  @relation(fields: [productId], references: [id])
+  order     Order   @relation(fields: [orderId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@index([productId])
 }
 
-model AdSpend {
-  id         String   @id @default(uuid())
-  storeId    String
-  platform   String
-  amount     Float
-  date       DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  accountId  String
-  campaignId String?
-  lastSync   DateTime
-  store      Store    @relation(fields: [storeId], references: [id])
+model PaymentGateway {
+  id              String  @id @default(uuid())
+  storeId         String
+  name            String
+  processingFee   Float
+  isActive        Boolean @default(true)
+  description     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  store           Store   @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
-  @@index([platform, accountId])
+}
+
+model ShippingRule {
+  id        String    @id @default(uuid())
+  storeId   String
+  name      String
+  cost      Float
+  condition String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+  store     Store     @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+}
+
+model FixedCost {
+  id          String   @id @default(uuid())
+  storeId     String
+  name        String
+  amount      Float
+  frequency   String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  store       Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+}
+
+model VariableCost {
+  id          String   @id @default(uuid())
+  storeId     String
+  name        String
+  rate        Float
+  type        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  store       Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+}
+
+model AdSpend {
+  id          String   @id @default(uuid())
+  storeId     String
+  platform    String
+  amount      Float
+  date        DateTime
+  campaign    String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  store       Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@index([platform])
+  @@index([date])
 }
 
 model AdSpendIntegration {
-  id           String    @id @default(uuid())
+  id           String   @id @default(uuid())
   storeId      String
-  platform     String    // FACEBOOK, GOOGLE, TIKTOK, etc.
+  platform     String
   accessToken  String
   refreshToken String?
   expiresAt    DateTime?
-  accountData  Json?     // Store platform-specific account information
-  isActive     Boolean   @default(true)
-  lastSyncAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  store        Store     @relation(fields: [storeId], references: [id])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  store        Store    @relation(fields: [storeId], references: [id])
 
   @@unique([storeId, platform])
   @@index([storeId])
   @@index([platform])
 }
 
-model FixedCost {
-  id        String    @id @default(uuid())
-  storeId   String
-  name      String
-  amount    Float
-  category  String
-  frequency String
-  startDate DateTime
-  endDate   DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  store     Store     @relation(fields: [storeId], references: [id])
-
-  @@index([storeId])
-}
-
-model VariableCost {
-  id             String    @id @default(uuid())
-  storeId        String
-  name           String
-  amountPerOrder Float
-  category       String
-  startDate      DateTime
-  endDate        DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  store          Store     @relation(fields: [storeId], references: [id])
-
-  @@index([storeId])
-}
-
+// EXISTING: Keep current FeeConfiguration structure to preserve data
 model FeeConfiguration {
   id                          String   @id @default(cuid())
   storeId                     String   @unique
@@ -518,29 +561,4 @@ model PaymentMethodFee {
   @@unique([storeId, paymentMethod])
   @@index([storeId])
   @@index([paymentMethod])
-}
-
-// User management system
-model User {
-  id          String    @id @default(uuid())
-  storeId     String
-  username    String    @unique
-  password    String    // Hashed password
-  email       String?
-  firstName   String?
-  lastName    String?
-  role        String    @default("VIEWER") // ADMIN, SELLER, VIEWER
-  isActive    Boolean   @default(true)
-  lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  createdBy   String?   // ID of the admin who created this user
-  
-  // Relationships
-  store       Store     @relation(fields: [storeId], references: [id])
-  
-  @@index([storeId])
-  @@index([username])
-  @@index([role])
-  @@index([storeId, isActive])
 }

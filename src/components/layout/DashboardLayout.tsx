@@ -27,6 +27,7 @@ import { useTheme as useAppTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePathname } from 'next/navigation';
 import LogoutIcon from "@mui/icons-material/Logout";
+import StoreSelector from "@/components/ui/StoreSelector";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -117,6 +118,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </Stack>
 
           <Stack direction="row" alignItems="center" spacing={2}>
+            {/* Store Selector */}
+            <StoreSelector />
+            
             <ThemeToggle />
             
             {/* User Info & Logout */}
