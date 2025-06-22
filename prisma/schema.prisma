@@ -273,20 +273,26 @@ model AdSpend {
 }
 
 model AdSpendIntegration {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   storeId      String
-  platform     String
+  platform     String    // GOOGLE, FACEBOOK, TIKTOK, etc.
   accessToken  String
   refreshToken String?
   expiresAt    DateTime?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  store        Store    @relation(fields: [storeId], references: [id])
+  accountData  Json?     // Store user info, ad accounts, etc.
+  isActive     Boolean   @default(true)
+  lastSyncAt   DateTime?
+  errorMessage String?   // Store last sync error if any
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  
+  // Relationships
+  store        Store     @relation(fields: [storeId], references: [id])
 
   @@unique([storeId, platform])
   @@index([storeId])
   @@index([platform])
+  @@index([isActive])
 }
 
 // EXISTING: Keep current FeeConfiguration structure to preserve data

@@ -150,7 +150,7 @@ const marketingChannels: MarketingChannel[] = [
     accountCount: 0,
     totalAccounts: 2,
     color: '#1877F2',
-    description: 'Connect Facebook Ads Manager to track ad spend and performance'
+    description: 'One-click OAuth connection to Facebook Ads Manager - automatically discovers your ad accounts and syncs spend data'
   },
   {
     id: 'google',
@@ -160,7 +160,7 @@ const marketingChannels: MarketingChannel[] = [
     accountCount: 0,
     totalAccounts: 2,
     color: '#4285F4',
-    description: 'Connect Google Ads to import campaign data and spending'
+    description: 'Seamless OAuth integration with Google Ads - authorize once and get automatic campaign performance tracking'
   },
   {
     id: 'tiktok',
@@ -255,6 +255,8 @@ export default function AdSpendPage() {
   const [credentials, setCredentials] = useState<ChannelCredentials>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [adSpendSummary, setAdSpendSummary] = useState<any>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const credentialsConfig: CredentialsConfig = {
     facebook: {
@@ -318,6 +320,74 @@ export default function AdSpendPage() {
     }
   }
 
+  // Load ad spend data and integration status
+  const loadAdSpendData = async () => {
+    try {
+      const response = await fetch('/api/ad-spend/sync')
+      if (response.ok) {
+        const data = await response.json()
+        setAdSpendSummary(data.summary)
+        
+        // Update channel status based on integrations
+        setChannels(prev => prev.map(channel => {
+          const integration = data.integrations.find((i: any) => 
+            i.platform.toLowerCase() === channel.id.toLowerCase()
+          )
+          
+          if (integration) {
+            return {
+              ...channel,
+              connected: integration.status === 'active',
+              accountCount: integration.status === 'active' ? channel.totalAccounts : 0,
+              lastSync: integration.lastSync,
+              hasError: integration.hasError
+            }
+          }
+          
+          return channel
+        }))
+      }
+    } catch (error) {
+      console.error('Failed to load ad spend data:', error)
+    }
+  }
+
+  // Handle manual sync
+  const handleSyncAdSpend = async () => {
+    setSyncing(true)
+    try {
+      const response = await fetch('/api/ad-spend/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ days: 30 })
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setStatusMessage({
+          type: 'success',
+          message: `Synced ${data.summary.recordCount} ad spend records from ${data.platforms.join(', ')}`
+        })
+        await loadAdSpendData() // Refresh data
+      } else {
+        const error = await response.json()
+        setStatusMessage({
+          type: 'error',
+          message: error.details || 'Failed to sync ad spend data'
+        })
+      }
+    } catch (error) {
+      setStatusMessage({
+        type: 'error',
+        message: 'Failed to sync ad spend data'
+      })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   // Handle URL parameters for connection status
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
@@ -372,6 +442,15 @@ export default function AdSpendPage() {
     if (success || error) {
       setTimeout(() => setStatusMessage(null), 5000)
     }
+    
+    // Load ad spend data on mount
+    loadAdSpendData()
+  }, [])
+  
+  // Auto-refresh ad spend data every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(loadAdSpendData, 30000)
+    return () => clearInterval(interval)
   }, [])
 
   const handleConnect = (channel: MarketingChannel) => {
@@ -538,14 +617,67 @@ export default function AdSpendPage() {
       <ContentContainer>
         <HeaderSection>
           <Typography variant="h3" component="h1" fontWeight="bold" gutterBottom>
-            Integrate marketing channels
+            Connect Your Ad Platforms
           </Typography>
-          <Typography variant="h6" component="p" sx={{ opacity: 0.9, maxWidth: 800, margin: '0 auto' }}>
-            Connect the ad channels you are using to auto sync ad spend and get precise Net Profit calculations.{' '}
-            <Typography component="span" sx={{ color: '#4CAF50', fontWeight: 600 }}>
-              See how to integrate a marketing channel
-            </Typography>
+          <Typography variant="h6" component="p" sx={{ opacity: 0.9, maxWidth: 800, margin: '0 auto', mb: 1 }}>
+            <strong>One-click OAuth connections</strong> - No API keys or manual setup required
           </Typography>
+          <Typography variant="body1" component="p" sx={{ opacity: 0.8, maxWidth: 600, margin: '0 auto', mb: 3 }}>
+            Simply click "Connect" below and authorize through your browser to automatically sync ad spend data and get precise profit calculations.
+          </Typography>
+          
+          {/* Ad Spend Summary */}
+          {adSpendSummary && (
+            <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+              <Box sx={{ 
+                background: 'rgba(255, 255, 255, 0.1)', 
+                borderRadius: 2, 
+                p: 2, 
+                minWidth: 150,
+                textAlign: 'center'
+              }}>
+                <Typography variant="h4" sx={{ color: 'white', fontWeight: 'bold' }}>
+                  ${adSpendSummary.totalSpend?.toFixed(2) || '0.00'}
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.8)' }}>
+                  Total Ad Spend (30 days)
+                </Typography>
+              </Box>
+              
+              {adSpendSummary.platformBreakdown?.map((platform: any) => (
+                <Box key={platform.platform} sx={{ 
+                  background: 'rgba(255, 255, 255, 0.1)', 
+                  borderRadius: 2, 
+                  p: 2, 
+                  minWidth: 120,
+                  textAlign: 'center'
+                }}>
+                  <Typography variant="h6" sx={{ color: 'white', fontWeight: 'bold' }}>
+                    ${platform.spend?.toFixed(2) || '0.00'}
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.8)' }}>
+                    {platform.platform} ({platform.campaigns} campaigns)
+                  </Typography>
+                </Box>
+              ))}
+              
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Button
+                  variant="contained"
+                  onClick={handleSyncAdSpend}
+                  disabled={syncing}
+                  startIcon={syncing ? <CircularProgress size={16} /> : null}
+                  sx={{
+                    background: 'rgba(255, 255, 255, 0.2)',
+                    '&:hover': { background: 'rgba(255, 255, 255, 0.3)' },
+                    borderRadius: 2
+                  }}
+                >
+                  {syncing ? 'Syncing...' : 'Sync Ad Spend'}
+                </Button>
+              </Box>
+            </Box>
+          )}
         </HeaderSection>
 
         {/* Status Message */}
@@ -652,10 +784,10 @@ export default function AdSpendPage() {
         </Grid>
 
         <Box sx={{ mt: 4, textAlign: 'center' }}>
-          <Alert severity="info" sx={{ display: 'inline-flex', borderRadius: 2 }}>
+          <Alert severity="info" sx={{ display: 'inline-flex', borderRadius: 2, maxWidth: 600, mx: 'auto' }}>
             <Typography variant="body2">
-              <strong>Custom Rules</strong> - Need help with advanced attribution or custom tracking? 
-              Contact support for custom integration solutions.
+              <strong>For Developers:</strong> OAuth apps must be configured by the application owner. 
+              See <code>OAUTH_SETUP_GUIDE.md</code> for developer setup instructions.
             </Typography>
           </Alert>
         </Box>
@@ -686,24 +818,34 @@ export default function AdSpendPage() {
         
         <DialogContent>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            You're about to connect your {selectedChannel?.name} account to automatically sync ad spend data.
+            <strong>Secure OAuth Connection</strong> - No API keys or passwords required
           </Typography>
           
-          <Alert severity="info" sx={{ mb: 2 }}>
+          <Alert severity="success" sx={{ mb: 2 }}>
             <Typography variant="body2">
-              This will redirect you to {selectedChannel?.name} to authorize access to your advertising accounts.
+              ✅ One-click authorization through {selectedChannel?.name}<br/>
+              ✅ Automatic account discovery<br/>
+              ✅ Real-time ad spend sync<br/>
+              ✅ Zero manual configuration
             </Typography>
           </Alert>
           
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            You'll be redirected to {selectedChannel?.name} to sign in and authorize access to your ad accounts. 
+            The process takes about 30 seconds and you'll be automatically redirected back here.
+          </Typography>
+          
           {selectedChannel?.id === 'facebook' && (
             <Typography variant="body2" color="text.secondary">
-              We'll request access to your Facebook Ads Manager data including campaign performance and spend metrics.
+              <strong>Facebook Permissions:</strong> We'll request read-only access to your ad account data, 
+              campaign performance metrics, and spend information. Your account credentials are never stored.
             </Typography>
           )}
           
           {selectedChannel?.id === 'google' && (
             <Typography variant="body2" color="text.secondary">
-              We'll request access to your Google Ads data including campaign performance, keywords, and spend metrics.
+              <strong>Google Permissions:</strong> We'll request read-only access to your Google Ads data, 
+              campaign performance, and spend metrics. Your account credentials are never stored.
             </Typography>
           )}
         </DialogContent>
