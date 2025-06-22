@@ -53,14 +53,13 @@ export async function POST(request: NextRequest) {
       type,
       name, 
       amount, 
-      category, 
       frequency,
-      amountPerOrder,
-      startDate,
-      endDate 
+      rate,
+      costType,
+      description
     } = body
 
-    if (!storeId || !type || !name || !category) {
+    if (!storeId || !type || !name) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -80,17 +79,15 @@ export async function POST(request: NextRequest) {
           storeId,
           name,
           amount,
-          category,
           frequency,
-          startDate: startDate ? new Date(startDate) : new Date(),
-          endDate: endDate ? new Date(endDate) : null,
+          description: description || null,
         },
       })
       return NextResponse.json(fixedCost)
     } else if (type === 'variable') {
-      if (amountPerOrder === undefined) {
+      if (rate === undefined || !costType) {
         return NextResponse.json(
-          { error: 'Amount per order is required for variable costs' },
+          { error: 'Rate and type are required for variable costs' },
           { status: 400 }
         )
       }
@@ -99,10 +96,9 @@ export async function POST(request: NextRequest) {
         data: {
           storeId,
           name,
-          amountPerOrder,
-          category,
-          startDate: startDate ? new Date(startDate) : new Date(),
-          endDate: endDate ? new Date(endDate) : null,
+          rate,
+          type: costType,
+          description: description || null,
         },
       })
       return NextResponse.json(variableCost)
@@ -129,11 +125,10 @@ export async function PUT(request: NextRequest) {
       type,
       name, 
       amount, 
-      category, 
       frequency,
-      amountPerOrder,
-      startDate,
-      endDate 
+      rate,
+      costType,
+      description
     } = body
 
     if (!id || !type) {
@@ -149,10 +144,8 @@ export async function PUT(request: NextRequest) {
         data: {
           name,
           amount,
-          category,
           frequency,
-          startDate: startDate ? new Date(startDate) : undefined,
-          endDate: endDate ? new Date(endDate) : null,
+          description: description || null,
         },
       })
       return NextResponse.json(fixedCost)
@@ -161,10 +154,9 @@ export async function PUT(request: NextRequest) {
         where: { id },
         data: {
           name,
-          amountPerOrder,
-          category,
-          startDate: startDate ? new Date(startDate) : undefined,
-          endDate: endDate ? new Date(endDate) : null,
+          rate,
+          type: costType,
+          description: description || null,
         },
       })
       return NextResponse.json(variableCost)
