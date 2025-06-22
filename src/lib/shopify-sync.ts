@@ -1,7 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
-import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds, getShopifyOrders, ShopifyOrder } from '@/lib/shopify-api'
+import { getAllOrders, getAllProducts, getOrdersCount, getOrderRefunds } from '@/lib/shopify-api'
 import { formatShopDomain } from '@/lib/shopify.config'
 
 interface SyncResult {
