@@ -168,8 +168,12 @@ async function calculateHandlingFeesFromAdditionalCosts(storeId: string, product
 }
 
 export async function syncShopifyOrders(storeId: string, timeframeDays: number = 30): Promise<SyncResult> {
+  const syncStartTime = Date.now()
+  const MAX_SYNC_TIME = 10 * 60 * 1000 // 10 minutes maximum
+  
   console.log(`📅 Starting Shopify orders sync for ${timeframeDays} days`)
   console.log(`💰 NEW: Fetching refunds for new orders during sync (existing orders use cached data)`)
+  console.log(`⏱️  Max sync time: ${MAX_SYNC_TIME / 1000 / 60} minutes`)
 
   const result: SyncResult = {
     success: false,
@@ -354,7 +358,18 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
     if (existingOrders.length > 0) {
       console.log(`🔄 Processing ${existingOrders.length} existing orders for basic updates...`)
       
-      for (const order of existingOrders) {
+      let processedCount = 0
+      let errorCount = 0
+      const problematicOrders: string[] = []
+      
+              for (const order of existingOrders) {
+        // ✅ TIMEOUT CHECK: Prevent infinite syncing
+        if (Date.now() - syncStartTime > MAX_SYNC_TIME) {
+          console.log(`⏱️  TIMEOUT: Sync has been running for ${MAX_SYNC_TIME / 1000 / 60} minutes, stopping to prevent hanging`)
+          console.log(`   📊 Processed ${processedCount}/${existingOrders.length} orders before timeout`)
+          break
+        }
+        
         try {
           // Detect payment method information for backfill (if missing)
           const paymentMethodData = detectPaymentMethod(order)
@@ -375,26 +390,53 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
           })
           
           updatedOrdersCount++
+          processedCount++
           
         } catch (error) {
-          console.error(`Error updating order ${order.name}:`, error)
-          // Continue with next order
+          errorCount++
+          problematicOrders.push(order.name || order.id.toString())
+          console.error(`❌ Error updating order ${order.name || order.id}:`, error)
+          // Continue with next order - this is the key to not getting stuck
         }
+        
+        processedCount++
+        
+        // Progress logging every 100 orders
+        if (processedCount % 100 === 0) {
+          console.log(`🔄 Progress: ${processedCount}/${existingOrders.length} orders processed (${updatedOrdersCount} updated, ${errorCount} errors)`)
+        }
+      }
+      
+      console.log(`🔄 Existing orders processing complete:`)
+      console.log(`   ✅ Successfully updated: ${updatedOrdersCount}`)
+      console.log(`   ❌ Failed to update: ${errorCount}`)
+      if (problematicOrders.length > 0) {
+        console.log(`   🚨 Problematic orders: ${problematicOrders.slice(0, 10).join(', ')}${problematicOrders.length > 10 ? ` (and ${problematicOrders.length - 10} more)` : ''}`)
       }
     }
 
     const totalProcessed = newOrdersCount + updatedOrdersCount
+    const totalAttempted = newOrders.length + existingOrders.length
+    const totalErrors = totalAttempted - totalProcessed
 
-    console.log(`✅ Sync completed successfully:`)
-    console.log(`   📊 Total orders processed: ${totalProcessed}`)
+    console.log(`✅ Sync completed:`)
+    console.log(`   📊 Total orders attempted: ${totalAttempted}`)
+    console.log(`   ✅ Total orders processed: ${totalProcessed}`)
     console.log(`   ➕ New orders: ${newOrdersCount} (includes refunds data)`)
     console.log(`   🔄 Updated orders: ${updatedOrdersCount} (preserves existing refunds data)`)
+    if (totalErrors > 0) {
+      console.log(`   ❌ Failed orders: ${totalErrors} (sync continues anyway)`)
+    }
     console.log(`   💰 Refunds: New orders include fresh refunds data, existing orders use cached data`)
 
+    // ✅ IMPORTANT: Mark as successful even if some orders failed - this prevents infinite stuck syncs
     result.success = true
     result.ordersProcessed = totalProcessed
     result.newOrders = newOrdersCount
     result.updatedOrders = updatedOrdersCount
+    if (totalErrors > 0) {
+      result.message = `${totalErrors} orders failed but sync completed`
+    }
 
     // Update sync status to completed
     await (prisma as any).syncStatus.updateMany({
