@@ -398,168 +398,175 @@ async function startProductsSyncBackground(
           break;
         }
         
-        // ✅ USE PROVEN WORKING LOGIC: Same as single-page sync
-        // Instead of getProductsVariantCostData, use the same REST API approach
-        for (const product of batch) {
-          // ✅ STOP CHECK: Before each product
+        // ✅ USE EXACT SAME LOGIC AS WORKING PAGE SYNC
+        // Use the same getProductsVariantCostData function that page sync uses successfully
+        const batchProductIds = batch.map((p: any) => p.id);
+        
+        // ✅ STOP CHECK: Before batch API call
+        if (shouldStopSync()) {
+          console.log('🛑 Products sync stopped before batch cost fetch - exiting');
+          break;
+        }
+        
+        console.log(`📦 Fetching variant cost data for batch of ${batchProductIds.length} products using working GraphQL approach`);
+        
+        try {
+          // Use the EXACT same function that works in page sync
+          const { getProductsVariantCostData } = await import('@/lib/shopify-api');
+          const variantCostData = await getProductsVariantCostData(formattedDomain, store.accessToken, batchProductIds);
+          
+          // ✅ STOP CHECK: After API call
           if (shouldStopSync()) {
-            console.log('🛑 Products sync stopped during individual product processing - exiting');
+            console.log('🛑 Products sync stopped after batch cost fetch - exiting');
             break;
           }
           
-          console.log(`📦 Processing "${product.title}" (ID: ${product.id})`);
-          
-          try {
-            // Fetch individual product data using REST API (same as working single-page sync)
-            const shopifyUrl = `https://${formattedDomain}/admin/api/2023-04/products/${product.id}.json`;
-            const response = await fetch(shopifyUrl, {
-              method: 'GET',
-              headers: {
-                'X-Shopify-Access-Token': store.accessToken,
-                'Content-Type': 'application/json'
-              },
-              signal: syncAbortController.signal
-            });
-
-            if (!response.ok) {
-              console.log(`❌ Failed to fetch product ${product.id}: ${response.status}`);
-              continue;
-            }
-
-            const productData = await response.json();
-            const shopifyProduct = productData.product;
-            
-            if (!shopifyProduct || !shopifyProduct.variants) {
-              console.log(`❌ No variants found for product ${product.id}`);
-              continue;
-            }
-
-            // ✅ STOP CHECK: Before variant processing  
+          // Process the results using the same logic as page sync
+          for (const product of batch) {
+            // ✅ STOP CHECK: Before each product
             if (shouldStopSync()) {
-              console.log('🛑 Products sync stopped during variant processing - exiting');
+              console.log('🛑 Products sync stopped during individual product processing - exiting');
               break;
             }
-
-            // Process variants using the same logic as working single-page sync
-            let productCostUpdated = false;
-            let firstVariantCost = 0;
             
-            console.log(`🔧 Processing ${shopifyProduct.variants.length} variants...`);
+            console.log(`📦 Processing "${product.title}" (ID: ${product.id})`);
             
-            for (const variant of shopifyProduct.variants) {
-              const cost = parseFloat(variant.inventory_cost) || 0;
+            try {
+              const productVariantCosts = variantCostData[product.id] || {};
+              const variantIdsWithCosts = Object.keys(productVariantCosts);
               
-              if (cost > 0) {
-                // Update variant in ShopifyProductVariant table
-                await (prisma as any).shopifyProductVariant.update({
-                  where: { id: variant.id.toString() },
-                  data: { 
-                    costPerItem: cost
+              let productCostUpdated = false;
+              let firstVariantCost = 0;
+              
+              if (variantIdsWithCosts.length > 0) {
+                console.log(`🔧 Processing ${variantIdsWithCosts.length} variants with cost data...`);
+                
+                // Process variants using the same logic as working single-page sync
+                for (const variantId of variantIdsWithCosts) {
+                  const cost = productVariantCosts[variantId];
+                  
+                  if (cost > 0) {
+                    // Update variant in ShopifyProductVariant table (same as page sync)
+                    try {
+                      await (prisma as any).shopifyProductVariant.update({
+                        where: { id: variantId },
+                        data: { 
+                          costPerItem: cost
+                        }
+                      });
+                      
+                      console.log(`     ✅ Updated Variant ${variantId} with cost $${cost}`);
+                      
+                      if (firstVariantCost === 0) {
+                        firstVariantCost = cost;
+                      }
+                      productCostUpdated = true;
+                      costDataUpdated++;
+                    } catch (error) {
+                      console.log(`     ❌ Failed to update variant ${variantId}:`, error);
+                    }
                   }
-                });
-                
-                console.log(`     ✅ Updated Variant ${variant.id} (${variant.title}) with cost $${cost}`);
-                
-                if (firstVariantCost === 0) {
-                  firstVariantCost = cost;
                 }
-                productCostUpdated = true;
-                costDataUpdated++;
               } else {
-                console.log(`     ⚪ Variant ${variant.id} (${variant.title}): No cost data available`);
+                console.log(`     ⚪ No cost data available for product ${product.id}`);
               }
+
+              // ✅ STOP CHECK: Before main product update
+              if (shouldStopSync()) {
+                console.log('🛑 Products sync stopped before main product update - exiting');
+                break;
+              }
+
+              // Update main Product table if we got cost data (same as working sync)
+              if (productCostUpdated && firstVariantCost > 0) {
+                // Get first variant data from existing database product
+                const firstVariant = product.variants?.[0];
+                const productPrice = firstVariant?.price || 0;
+                const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, productPrice);
+
+                try {
+                  // Update main Product table like single-page sync
+                  await prisma.product.upsert({
+                    where: { shopifyId: product.id },
+                    update: { 
+                      costOfGoodsSold: firstVariantCost,
+                      handlingFees: calculatedHandlingFees,
+                      costSource: 'SHOPIFY',
+                      price: productPrice,
+                      sellingPrice: productPrice,
+                      title: product.title
+                    },
+                    create: {
+                      shopifyId: product.id,
+                      storeId: store.id,
+                      title: product.title || `Product ${product.id}`,
+                      description: '',
+                      price: productPrice,
+                      sellingPrice: productPrice,
+                      cost: firstVariantCost,
+                      costOfGoodsSold: firstVariantCost,
+                      handlingFees: calculatedHandlingFees,
+                      costSource: 'SHOPIFY',
+                      sku: firstVariant?.sku || null,
+                      status: product.status || 'active',
+                      createdAt: new Date(),
+                      updatedAt: new Date()
+                    }
+                  });
+
+                  console.log(`✅ Updated Product ${product.id} with cost $${firstVariantCost} and handling fees $${calculatedHandlingFees}`);
+                  productsWithCostData++;
+                } catch (error: any) {
+                  if (error.code === 'P2002' && error.meta?.target?.includes('sku')) {
+                    // Handle SKU constraint - update by shopifyId instead
+                    try {
+                      await prisma.product.update({
+                        where: { shopifyId: product.id },
+                        data: { 
+                          costOfGoodsSold: firstVariantCost,
+                          handlingFees: calculatedHandlingFees,
+                          costSource: 'SHOPIFY',
+                          price: productPrice,
+                          sellingPrice: productPrice,
+                          title: product.title
+                        }
+                      });
+                      console.log(`✅ Updated Product ${product.id} with cost $${firstVariantCost} (SKU conflict resolved)`);
+                      productsWithCostData++;
+                    } catch (updateError) {
+                      console.log(`❌ Failed to update product ${product.id}:`, updateError);
+                    }
+                  } else {
+                    console.log(`❌ Failed to upsert product ${product.id}:`, error);
+                  }
+                }
+              }
+
+              processedProducts = i + batch.indexOf(product) + 1;
+              currentProduct = product.title;
+              updateSharedSyncStatus({
+                syncInProgress: true,
+                syncType,
+                totalProducts: productsNeedingSync.length,
+                processedProducts: i + batch.indexOf(product) + 1,
+                currentProduct: product.title,
+                costDataUpdated: costDataUpdated,
+                productsWithCostData: productsWithCostData
+              });
+
+            } catch (error) {
+              console.log(`❌ Error processing product ${product.id}:`, error);
             }
 
-            // ✅ STOP CHECK: Before main product update
+            // ✅ STOP CHECK: After each product
             if (shouldStopSync()) {
-              console.log('🛑 Products sync stopped before main product update - exiting');
+              console.log('🛑 Products sync stopped after product processing - exiting');
               break;
             }
-
-            // Update main Product table if we got cost data (same as working sync)
-            if (productCostUpdated && firstVariantCost > 0) {
-              const productPrice = parseFloat(shopifyProduct.variants[0]?.price) || 0;
-              const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, productPrice);
-
-              try {
-                // Update main Product table like single-page sync
-                await prisma.product.upsert({
-                  where: { shopifyId: product.id },
-                  update: { 
-                    costOfGoodsSold: firstVariantCost,
-                    handlingFees: calculatedHandlingFees,
-                    costSource: 'SHOPIFY',
-                    price: productPrice,
-                    sellingPrice: productPrice,
-                    title: shopifyProduct.title
-                  },
-                  create: {
-                    shopifyId: product.id,
-                    storeId: store.id,
-                    title: shopifyProduct.title || `Product ${product.id}`,
-                    description: '',
-                    price: productPrice,
-                    sellingPrice: productPrice,
-                    cost: firstVariantCost,
-                    costOfGoodsSold: firstVariantCost,
-                    handlingFees: calculatedHandlingFees,
-                    costSource: 'SHOPIFY',
-                    sku: shopifyProduct.variants[0]?.sku || null,
-                    status: shopifyProduct.status || 'active',
-                    createdAt: new Date(),
-                    updatedAt: new Date()
-                  }
-                });
-
-                console.log(`✅ Updated Product ${product.id} with cost $${firstVariantCost} and handling fees $${calculatedHandlingFees}`);
-                productsWithCostData++;
-              } catch (error: any) {
-                if (error.code === 'P2002' && error.meta?.target?.includes('sku')) {
-                  // Handle SKU constraint - update by shopifyId instead
-                  try {
-                    await prisma.product.update({
-                      where: { shopifyId: product.id },
-                      data: { 
-                        costOfGoodsSold: firstVariantCost,
-                        handlingFees: calculatedHandlingFees,
-                        costSource: 'SHOPIFY',
-                        price: productPrice,
-                        sellingPrice: productPrice,
-                        title: shopifyProduct.title
-                      }
-                    });
-                    console.log(`✅ Updated Product ${product.id} with cost $${firstVariantCost} (SKU conflict resolved)`);
-                    productsWithCostData++;
-                  } catch (updateError) {
-                    console.log(`❌ Failed to update product ${product.id}:`, updateError);
-                  }
-                } else {
-                  console.log(`❌ Failed to upsert product ${product.id}:`, error);
-                }
-              }
-            }
-
-            processedProducts = i + batch.indexOf(product) + 1;
-            currentProduct = product.title;
-            updateSharedSyncStatus({
-              syncInProgress: true,
-              syncType,
-              totalProducts: productsNeedingSync.length,
-              processedProducts: i + batch.indexOf(product) + 1,
-              currentProduct: product.title,
-              costDataUpdated: costDataUpdated,
-              productsWithCostData: productsWithCostData
-            });
-
-          } catch (error) {
-            console.log(`❌ Error processing product ${product.id}:`, error);
           }
 
-          // ✅ STOP CHECK: After each product
-          if (shouldStopSync()) {
-            console.log('🛑 Products sync stopped after product processing - exiting');
-            break;
-          }
+        } catch (error) {
+          console.log(`❌ Error fetching variant cost data for batch:`, error);
         }
 
         // ✅ STOP CHECK: After batch processing
