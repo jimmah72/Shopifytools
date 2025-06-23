@@ -1,0 +1,172 @@
+{
+  "name": "Google Ads Daily Sync (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "b5c6d7e8-9f10-11e2-3a45-6b78c90d1e2f",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 1,
+        "simple": false,
+        "filters": {
+          "q": "from:googleads-noreply@google.com has:attachment subject:\"Daily Ad Spend\""
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "id": "c7d8e9f0-1a2b-3c4d-5e6f-7g8h9i0j1k2l",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Google Ads CSV attachment\nconst items = $input.all();\n\nif (!items || items.length === 0) {\n  console.log('No emails found');\n  return [];\n}\n\nconst processedItems = [];\n\nfor (const item of items) {\n  console.log('Processing item:', item);\n  \n  // Check if item has attachments\n  if (!item.json.attachments || item.json.attachments.length === 0) {\n    console.log('No attachments found in this email');\n    continue;\n  }\n  \n  // Find CSV attachment\n  const csvAttachment = item.json.attachments.find(att => \n    att.filename && att.filename.toLowerCase().includes('.csv')\n  );\n  \n  if (!csvAttachment) {\n    console.log('No CSV attachment found');\n    continue;\n  }\n  \n  try {\n    // Get CSV content\n    const csvContent = csvAttachment.data;\n    \n    if (!csvContent) {\n      console.log('No CSV content found');\n      continue;\n    }\n    \n    // Parse CSV content (handle quoted values properly)\n    const lines = csvContent.split('\\n');\n    const headers = lines[0].split(',').map(h => h.replace(/\"/g, '').trim());\n    \n    console.log('CSV Headers:', headers);\n    \n    // Process each data row\n    for (let i = 1; i < lines.length; i++) {\n      const line = lines[i].trim();\n      if (!line) continue;\n      \n      // Parse CSV line handling quoted values\n      const values = [];\n      let currentValue = '';\n      let inQuotes = false;\n      \n      for (let j = 0; j < line.length; j++) {\n        const char = line[j];\n        \n        if (char === '\"') {\n          inQuotes = !inQuotes;\n        } else if (char === ',' && !inQuotes) {\n          values.push(currentValue.trim());\n          currentValue = '';\n        } else {\n          currentValue += char;\n        }\n      }\n      values.push(currentValue.trim()); // Add the last value\n      \n      // Create row object\n      const row = {};\n      headers.forEach((header, index) => {\n        row[header] = values[index] || '';\n      });\n      \n      console.log('Parsed row:', row);\n      \n      // Map to webhook format using database field names\n      const webhookData = {\n        apiKey: 'shopify-tools-webhook-2025',\n        storeDomain: '25898e.myshopify.com',\n        platform: 'google_ads',\n        accountId: 'google-ads-account',\n        campaignId: row['Campaign ID'] || '',\n        campaignName: row['Campaign'] || '',\n        spend: parseFloat(row['Cost'] || '0'),\n        date: row['Day'] || new Date().toISOString().split('T')[0],\n        impressions: parseInt(row['Impr.'] || '0'),\n        clicks: parseInt(row['Clicks'] || '0'),\n        conversions: parseInt(row['Conversions'] || '0'),\n        conversionValue: parseFloat(row['Conv. value'] || '0'),\n        currency: 'USD',\n        rawData: row\n      };\n      \n      console.log('Webhook data:', webhookData);\n      \n      processedItems.push({\n        json: webhookData\n      });\n    }\n    \n  } catch (error) {\n    console.error('Error processing CSV:', error);\n  }\n}\n\nconsole.log(`Processed ${processedItems.length} ad spend records`);\nreturn processedItems;"
+      },
+      "id": "d8e9f0a1-2b3c-4d5e-6f7g-8h9i0j1k2l3m",
+      "name": "Process CSV",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://shopifytools.onrender.com/api/ad-spend/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "e9f0a1b2-3c4d-5e6f-7g8h-9i0j1k2l3m4n",
+      "name": "Send to Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        900,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://shopifytoolsprofit.netlify.app/api/ad-spend/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f0a1b2c3-4d5e-6f7g-8h9i-0j1k2l3m4n5o",
+      "name": "Send to Netlify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        900,
+        360
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail": {
+      "main": [
+        [
+          {
+            "node": "Process CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CSV": {
+      "main": [
+        [
+          {
+            "node": "Send to Render",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send to Netlify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "fixed-gmail-node-configuration",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "google-ads-daily-sync-fixed",
+  "tags": []
+} 

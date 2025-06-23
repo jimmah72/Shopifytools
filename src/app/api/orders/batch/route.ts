@@ -27,7 +27,7 @@ export async function POST(request: Request) {
             },
           },
           data: {
-            fulfillmentStatus: 'FULFILLED',
+            status: 'FULFILLED',
             updatedAt: new Date(),
           },
         })
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
             },
           },
           data: {
-            fulfillmentStatus: 'UNFULFILLED',
+            status: 'UNFULFILLED',
             updatedAt: new Date(),
           },
         })

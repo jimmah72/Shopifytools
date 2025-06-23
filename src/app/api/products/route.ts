@@ -315,20 +315,41 @@ export async function GET(request: NextRequest) {
           not: 'pending-setup'
         }
       },
-      select: { id: true, domain: true, accessToken: true },
-      orderBy: {
-        updatedAt: 'desc' // Get the most recently updated store
-      }
+      select: { 
+        id: true, 
+        domain: true, 
+        accessToken: true 
+      },
+      orderBy: { updatedAt: 'desc' }
     })
 
+    // If no active store with real token, fall back to any active store
+    if (!store) {
+      console.log('Products API - No active store with real token found, trying any active store')
+      store = await prisma.store.findFirst({
+        where: {
+          accessToken: {
+            not: 'pending-setup'
+          }
+        },
+        select: { 
+          id: true, 
+          domain: true, 
+          accessToken: true 
+        },
+        orderBy: { updatedAt: 'desc' }
+      })
+    }
     // Last resort: any store at all
     if (!store) {
       console.log('Products API - No active store found, trying any store')
       store = await prisma.store.findFirst({
-        select: { id: true, domain: true, accessToken: true },
-        orderBy: {
-          updatedAt: 'desc'
-        }
+        select: { 
+          id: true, 
+          domain: true, 
+          accessToken: true 
+        },
+        orderBy: { updatedAt: 'desc' }
       })
     }
 

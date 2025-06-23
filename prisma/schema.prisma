@@ -8,103 +8,54 @@ datasource db {
 }
 
 model Store {
-  id                   String                @id @default(uuid())
-  name                 String
-  domain               String                @unique
-  accessToken          String
-  isActive             Boolean               @default(true)  // NEW: Soft delete flag
-  isArchived           Boolean               @default(false) // NEW: Archive instead of delete
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  
-  // NEW: Multi-store relationships
-  userAccess           UserStoreAccess[]     // NEW: Many-to-many with users
-  currentUsers         User[]                @relation("UserCurrentStore") // NEW: Users who have this as current store
-  
-  // Existing relationships preserved
-  adSpends             AdSpend[]
-  adSpendIntegrations  AdSpendIntegration[]
-  fixedCosts           FixedCost[]
-  orders               Order[]
-  paymentGateways      PaymentGateway[]
-  products             Product[]
-  shippingRules        ShippingRule[]
-  variableCosts        VariableCost[]
-  feeConfiguration     FeeConfiguration?
-  additionalCosts      AdditionalCost[]
-  subscriptionFees     SubscriptionFee[]
-  
-  // Shopify data storage
-  shopifyOrders        ShopifyOrder[]
-  shopifyProducts      ShopifyProduct[]
-  syncStatuses         SyncStatus[]
-  paymentMethodFees    PaymentMethodFee[]
-  
-  // User management (existing)
-  users                User[]                @relation("UserStore") // EXISTING: Keep for backward compatibility
-  
-  @@index([isActive])      // NEW
-  @@index([isArchived])    // NEW
-  @@index([domain])        // NEW
-}
-
-// NEW: Junction table for user-store access with per-store roles
-model UserStoreAccess {
-  id          String   @id @default(uuid())
-  userId      String
-  storeId     String
-  role        String   // ADMIN, SELLER, VIEWER - per store basis
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  createdBy   String?
-  
-  // Relationships
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  
-  @@unique([userId, storeId])
-  @@index([userId])
-  @@index([storeId])
-  @@index([userId, isActive])
-  @@index([role])
+  id                  String               @id @default(uuid())
+  name                String
+  domain              String               @unique
+  accessToken         String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  adSpends            AdSpend[]
+  adSpendIntegrations AdSpendIntegration[]
+  additionalCosts     AdditionalCost[]
+  feeConfiguration    FeeConfiguration?
+  fixedCosts          FixedCost[]
+  orders              Order[]
+  paymentGateways     PaymentGateway[]
+  paymentMethodFees   PaymentMethodFee[]
+  products            Product[]
+  shippingRules       ShippingRule[]
+  shopifyOrders       ShopifyOrder[]
+  shopifyProducts     ShopifyProduct[]
+  subscriptionFees    SubscriptionFee[]
+  syncStatuses        SyncStatus[]
+  users               User[]               @relation("UserStore")
+  variableCosts       VariableCost[]
 }
 
 model User {
-  id              String   @id @default(uuid())
-  storeId         String   // EXISTING: Keep for backward compatibility
-  username        String   @unique
-  password        String
-  email           String?
-  firstName       String?
-  lastName        String?
-  role            String   // EXISTING: Keep for backward compatibility
-  isActive        Boolean  @default(true)
-  lastLoginAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  createdBy       String?
-  
-  // NEW: Current store selection for UI (session state)
-  currentStoreId  String?
-  currentStore    Store?   @relation("UserCurrentStore", fields: [currentStoreId], references: [id])
-  
-  // NEW: Many-to-many relationship with stores
-  storeAccess     UserStoreAccess[]
-  
-  // EXISTING: Keep for backward compatibility
-  store           Store    @relation("UserStore", fields: [storeId], references: [id])
-  
+  id          String    @id @default(uuid())
+  storeId     String
+  username    String    @unique
+  password    String
+  email       String?
+  firstName   String?
+  lastName    String?
+  role        String    @default("VIEWER")
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String?
+  store       Store     @relation("UserStore", fields: [storeId], references: [id])
+
   @@index([username])
   @@index([role])
   @@index([storeId])
   @@index([storeId, isActive])
-  @@index([currentStoreId])    // NEW
-  @@index([isActive])          // NEW
 }
 
 model Product {
   id              String           @id @default(cuid())
-  shopifyId       String?          @unique
   storeId         String
   title           String
   description     String?
@@ -123,6 +74,7 @@ model Product {
   miscFees        Float            @default(0)
   sellingPrice    Float            @default(0)
   status          String           @default("Active")
+  shopifyId       String?          @unique
   costSource      String           @default("SHOPIFY")
   orders          Order[]
   orderItems      OrderItem[]
@@ -148,314 +100,289 @@ model ProductVariant {
   updatedAt       DateTime  @updatedAt
   costLastUpdated DateTime?
   costSource      String?   @default("SHOPIFY")
-  orders          Order[]
+  Order           Order[]
   product         Product   @relation(fields: [productId], references: [id])
 
   @@index([productId])
 }
 
 model Order {
-  id                    String           @id @default(cuid())
-  storeId               String
-  orderNumber           String?
-  orderName             String?
-  status                String
-  customerName          String?
-  customerEmail         String?
-  totalAmount           Float
-  costOfGoodsSold       Float            @default(0)
-  shippingCost          Float            @default(0)
-  profit                Float            @default(0)
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
-  productId             String?
-  margin                Float            @default(0)
-  orderDate             DateTime?
-  productVariantId      String?
-  orderItems            OrderItem[]
-  product               Product?         @relation(fields: [productId], references: [id])
-  productVariant        ProductVariant?  @relation(fields: [productVariantId], references: [id])
-  store                 Store            @relation(fields: [storeId], references: [id])
+  id                String         @id @default(cuid())
+  storeId           String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  customerId        String?
+  fulfillmentStatus String         @default("UNFULFILLED")
+  status            String         @default("ACTIVE")
+  adSpend           Float          @default(0)
+  cost              Float
+  price             Float
+  productId         String
+  quantity          Int
+  externalFee       Float
+  fixedFee          Float
+  paymentGatewayId  String
+  percentageFee     Float
+  shippingCost      Float
+  shippingRuleId    String
+  variantId         String
+  Customer          Customer?      @relation(fields: [customerId], references: [id])
+  PaymentGateway    PaymentGateway @relation(fields: [paymentGatewayId], references: [id])
+  product           Product        @relation(fields: [productId], references: [id])
+  ShippingRule      ShippingRule   @relation(fields: [shippingRuleId], references: [id])
+  store             Store          @relation(fields: [storeId], references: [id])
+  ProductVariant    ProductVariant @relation(fields: [variantId], references: [id])
+  orderItems        OrderItem[]
 
   @@index([storeId])
   @@index([productId])
-  @@index([productVariantId])
-  @@index([orderDate])
+  @@index([customerId])
+  @@index([paymentGatewayId])
+  @@index([shippingRuleId])
+  @@index([variantId])
 }
 
 model OrderItem {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   orderId   String
   productId String
   quantity  Int
   price     Float
-  order     Order   @relation(fields: [orderId], references: [id])
-  product   Product @relation(fields: [productId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  order     Order    @relation(fields: [orderId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@index([productId])
 }
 
 model PaymentGateway {
-  id              String  @id @default(uuid())
-  storeId         String
-  name            String
-  processingFee   Float
-  isActive        Boolean @default(true)
-  description     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  store           Store   @relation(fields: [storeId], references: [id])
+  id            String   @id @default(uuid())
+  storeId       String
+  name          String
+  fixedFee      Float
+  percentageFee Float
+  externalFee   Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  Order         Order[]
+  store         Store    @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model ShippingRule {
-  id        String    @id @default(uuid())
-  storeId   String
-  name      String
-  cost      Float
-  condition String?
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  products  Product[]
-  store     Store     @relation(fields: [storeId], references: [id])
+  id          String    @id @default(uuid())
+  storeId     String
+  name        String
+  baseRate    Float
+  perItemRate Float
+  weightRate  Float?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  Order       Order[]
+  products    Product[]
+  store       Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model FixedCost {
-  id          String   @id @default(uuid())
-  storeId     String
-  name        String
-  amount      Float
-  frequency   String
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  store       Store    @relation(fields: [storeId], references: [id])
+  id        String    @id @default(uuid())
+  storeId   String
+  name      String
+  amount    Float
+  category  String
+  frequency String
+  startDate DateTime
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  store     Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model VariableCost {
-  id          String   @id @default(uuid())
-  storeId     String
-  name        String
-  rate        Float
-  type        String
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  store       Store    @relation(fields: [storeId], references: [id])
+  id             String    @id @default(uuid())
+  storeId        String
+  name           String
+  amountPerOrder Float
+  category       String
+  startDate      DateTime
+  endDate        DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  store          Store     @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
 }
 
 model AdSpend {
-  id          String   @id @default(uuid())
-  storeId     String
-  platform    String
-  amount      Float
-  date        DateTime
-  campaign    String?
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  store       Store    @relation(fields: [storeId], references: [id])
+  id         String   @id @default(uuid())
+  storeId    String
+  platform   String
+  amount     Float
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  accountId  String
+  campaignId String?
+  lastSync   DateTime
+  store      Store    @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
-  @@index([platform])
+  @@index([platform, accountId])
   @@index([date])
 }
 
 model AdSpendIntegration {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   storeId      String
   platform     String
   accessToken  String
   refreshToken String?
   expiresAt    DateTime?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  store        Store    @relation(fields: [storeId], references: [id])
+  accountData  Json?
+  isActive     Boolean   @default(true)
+  lastSyncAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  store        Store     @relation(fields: [storeId], references: [id])
 
   @@unique([storeId, platform])
   @@index([storeId])
   @@index([platform])
 }
 
-// EXISTING: Keep current FeeConfiguration structure to preserve data
 model FeeConfiguration {
-  id                          String   @id @default(cuid())
-  storeId                     String   @unique
-  paymentGatewayRate          Float    @default(0.029)  // 2.9%
-  processingFeePerOrder       Float    @default(0.30)   // $0.30 per order
-  defaultCogRate              Float    @default(0.30)   // 30%
-  chargebackRate              Float    @default(0.006)  // 0.6%
-  returnProcessingRate        Float    @default(0.005)  // 0.5%
-  
-  // Enhanced cost structure
-  overheadCostPerOrder        Float    @default(0.00)   // $ per order
-  overheadCostPerItem         Float    @default(0.00)   // $ per item
-  miscCostPerOrder            Float    @default(0.00)   // $ per order
-  miscCostPerItem             Float    @default(0.00)   // $ per item
-  
-  // NEW: Payment method-specific fee control
-  usePaymentMethodFees        Boolean  @default(false)  // Toggle for payment method-specific fees
-  
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
-  
-  // Relationships
-  store                       Store    @relation(fields: [storeId], references: [id])
-  
+  id                    String   @id @default(cuid())
+  storeId               String   @unique
+  paymentGatewayRate    Float    @default(0.029)
+  processingFeePerOrder Float    @default(0.30)
+  defaultCogRate        Float    @default(0.30)
+  chargebackRate        Float    @default(0.006)
+  returnProcessingRate  Float    @default(0.005)
+  overheadCostPerOrder  Float    @default(0.00)
+  overheadCostPerItem   Float    @default(0.00)
+  miscCostPerOrder      Float    @default(0.00)
+  miscCostPerItem       Float    @default(0.00)
+  usePaymentMethodFees  Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  store                 Store    @relation(fields: [storeId], references: [id])
+
   @@index([storeId])
 }
 
 model AdditionalCost {
-  id                    String    @id @default(uuid())
-  storeId               String
-  
-  name                  String    // User-defined fee name
-  percentagePerOrder    Float     @default(0.00)    // Percentage per order
-  percentagePerItem     Float     @default(0.00)    // Percentage per item
-  flatRatePerOrder      Float     @default(0.00)    // Flat rate per order
-  flatRatePerItem       Float     @default(0.00)    // Flat rate per item
-  isActive              Boolean   @default(true)    // Active/inactive toggle
-  
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  
-  store                 Store     @relation(fields: [storeId], references: [id])
-  
+  id                 String   @id @default(uuid())
+  storeId            String
+  name               String
+  percentagePerOrder Float    @default(0.00)
+  percentagePerItem  Float    @default(0.00)
+  flatRatePerOrder   Float    @default(0.00)
+  flatRatePerItem    Float    @default(0.00)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  store              Store    @relation(fields: [storeId], references: [id])
+
   @@index([storeId])
   @@index([storeId, isActive])
 }
 
 model SubscriptionFee {
-  id                    String    @id @default(uuid())
-  storeId               String
-  
-  name                  String    // User-defined subscription name
-  billingType           String    @default("MONTHLY") // "MONTHLY" or "YEARLY"
-  monthlyAmount         Float     @default(0.00)    // Monthly subscription amount
-  yearlyAmount          Float     @default(0.00)    // Yearly subscription amount (alternative to monthly)
-  dailyRate             Float     @default(0.00)    // Calculated daily rate for dashboard
-  isActive              Boolean   @default(true)    // Active/inactive toggle
-  
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  
-  store                 Store     @relation(fields: [storeId], references: [id])
-  
+  id            String   @id @default(uuid())
+  storeId       String
+  name          String
+  billingType   String   @default("MONTHLY")
+  monthlyAmount Float    @default(0.00)
+  yearlyAmount  Float    @default(0.00)
+  dailyRate     Float    @default(0.00)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  store         Store    @relation(fields: [storeId], references: [id])
+
   @@index([storeId])
   @@index([storeId, isActive])
 }
 
-// New models for storing Shopify data locally
 model ShopifyOrder {
-  id                  String             @id // Use Shopify order ID directly
-  storeId             String
-  shopifyOrderNumber  Int
-  orderName           String             // Display name like "#1001"
-  email               String?
-  createdAt           DateTime
-  updatedAt           DateTime
-  closedAt            DateTime?
-  processedAt         DateTime?
-  
-  // Financial data
-  currency            String
-  totalPrice          Float
-  subtotalPrice       Float
-  totalTax            Float
-  totalDiscounts      Float
-  totalShipping       Float
-  totalRefunds        Float              @default(0)
-  
-  // Status fields
-  financialStatus     String
-  fulfillmentStatus   String?
-  
-  // Customer data (simplified)
-  customerFirstName   String?
-  customerLastName    String?
-  customerEmail       String?
-  
-  // Shipping address (simplified)
-  shippingFirstName   String?
-  shippingLastName    String?
-  shippingAddress1    String?
-  shippingCity        String?
-  shippingProvince    String?
-  shippingCountry     String?
-  shippingZip         String?
-  
-  // Gateway info
-  gateway             String?
-  processingMethod    String?
-  
-  // NEW: Enhanced payment method tracking
-  paymentGateway      String?            // shopify_payments, paypal, stripe, etc.
-  paymentSource       String?            // web, pos, mobile, etc.
-  paymentMethod       String?            // computed: gateway_source (e.g., "shopify_payments_web")
-  transactionGateway  String?            // from transaction data
-  
-  // Metadata
-  tags                String?
-  note                String?
-  
-  // Relationships
-  store               Store              @relation(fields: [storeId], references: [id])
-  lineItems           ShopifyLineItem[]
-  
-  // Sync tracking
-  lastSyncedAt        DateTime           @default(now())
-  
+  id                 String            @id
+  storeId            String
+  shopifyOrderNumber Int
+  orderName          String
+  email              String?
+  createdAt          DateTime
+  updatedAt          DateTime
+  closedAt           DateTime?
+  processedAt        DateTime?
+  currency           String
+  totalPrice         Float
+  subtotalPrice      Float
+  totalTax           Float
+  totalDiscounts     Float
+  totalShipping      Float
+  totalRefunds       Float             @default(0)
+  financialStatus    String
+  fulfillmentStatus  String?
+  customerFirstName  String?
+  customerLastName   String?
+  customerEmail      String?
+  shippingFirstName  String?
+  shippingLastName   String?
+  shippingAddress1   String?
+  shippingCity       String?
+  shippingProvince   String?
+  shippingCountry    String?
+  shippingZip        String?
+  gateway            String?
+  processingMethod   String?
+  paymentGateway     String?
+  paymentSource      String?
+  paymentMethod      String?
+  transactionGateway String?
+  tags               String?
+  note               String?
+  lastSyncedAt       DateTime          @default(now())
+  lineItems          ShopifyLineItem[]
+  store              Store             @relation(fields: [storeId], references: [id])
+
   @@index([storeId])
   @@index([createdAt])
   @@index([financialStatus])
   @@index([fulfillmentStatus])
   @@index([lastSyncedAt])
-  @@index([paymentMethod])  // NEW: Index for payment method queries
+  @@index([paymentMethod])
 }
 
 model ShopifyLineItem {
-  id                String       @id // Use Shopify line item ID
-  orderId           String
-  productId         String?      // Shopify product ID
-  variantId         String?      // Shopify variant ID
-  
-  title             String
-  variantTitle      String?
-  sku               String?
-  quantity          Int
-  price             Float
-  totalDiscount     Float
-  
-  // Product details
-  productType       String?
-  vendor            String?
-  
-  // Fulfillment
-  fulfillableQuantity Int @default(0)
+  id                  String       @id
+  orderId             String
+  productId           String?
+  variantId           String?
+  title               String
+  variantTitle        String?
+  sku                 String?
+  quantity            Int
+  price               Float
+  totalDiscount       Float
+  productType         String?
+  vendor              String?
+  fulfillableQuantity Int          @default(0)
   fulfillmentService  String?
-  
-  // Relationships
-  order             ShopifyOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  
+  order               ShopifyOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
   @@index([orderId])
   @@index([productId])
   @@index([variantId])
 }
 
 model ShopifyProduct {
-  id              String               @id // Use Shopify product ID
+  id              String                  @id
   storeId         String
   title           String
   handle          String
@@ -463,25 +390,17 @@ model ShopifyProduct {
   productType     String?
   vendor          String?
   tags            String?
-  status          String               @default("active")
+  status          String                  @default("active")
   createdAt       DateTime
   updatedAt       DateTime
   publishedAt     DateTime?
-  
-  // SEO
   metaTitle       String?
   metaDescription String?
-  
-  // Images (store as JSON for simplicity)
   images          Json?
-  
-  // Relationships
-  store           Store                @relation(fields: [storeId], references: [id])
+  lastSyncedAt    DateTime                @default(now())
+  store           Store                   @relation(fields: [storeId], references: [id])
   variants        ShopifyProductVariant[]
-  
-  // Sync tracking
-  lastSyncedAt    DateTime             @default(now())
-  
+
   @@index([storeId])
   @@index([handle])
   @@index([status])
@@ -489,76 +408,71 @@ model ShopifyProduct {
 }
 
 model ShopifyProductVariant {
-  id                String          @id // Use Shopify variant ID
-  productId         String
-  title             String
-  sku               String?
-  price             Float
-  compareAtPrice    Float?
-  costPerItem       Float?
-  
-  // Inventory
-  inventoryQuantity Int             @default(0)
-  inventoryPolicy   String?
+  id                  String         @id
+  productId           String
+  title               String
+  sku                 String?
+  price               Float
+  compareAtPrice      Float?
+  costPerItem         Float?
+  inventoryQuantity   Int            @default(0)
+  inventoryPolicy     String?
   inventoryManagement String?
-  
-  // Physical properties
-  weight            Float?
-  weightUnit        String?
-  
-  // Fulfillment
-  fulfillmentService String?
-  requiresShipping  Boolean         @default(true)
-  taxable           Boolean         @default(true)
-  
-  // Options (store as JSON)
-  options           Json?
-  
-  // Relationships  
-  product           ShopifyProduct  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  
+  weight              Float?
+  weightUnit          String?
+  fulfillmentService  String?
+  requiresShipping    Boolean        @default(true)
+  taxable             Boolean        @default(true)
+  options             Json?
+  product             ShopifyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
   @@index([productId])
   @@index([sku])
 }
 
 model SyncStatus {
-  id              String    @id @default(uuid())
-  storeId         String
-  dataType        String    // 'orders', 'products', 'customers', etc.
-  lastSyncAt      DateTime  @default(now())
-  lastOrderId     String?   // For order pagination
-  lastProductId   String?   // For product pagination
-  lastCreatedAt   DateTime? // For time-based pagination
-  syncInProgress  Boolean   @default(false)
-  lastHeartbeat   DateTime? // Timestamp updated during sync to detect stuck processes
-  timeframeDays   Int?      // Track what timeframe the sync is running for
-  totalRecords    Int       @default(0)
-  errorMessage    String?
-  
-  store           Store     @relation(fields: [storeId], references: [id])
-  
+  id             String    @id @default(uuid())
+  storeId        String
+  dataType       String
+  lastSyncAt     DateTime  @default(now())
+  lastOrderId    String?
+  lastProductId  String?
+  lastCreatedAt  DateTime?
+  syncInProgress Boolean   @default(false)
+  lastHeartbeat  DateTime?
+  timeframeDays  Int?
+  totalRecords   Int       @default(0)
+  errorMessage   String?
+  store          Store     @relation(fields: [storeId], references: [id])
+
   @@unique([storeId, dataType])
   @@index([storeId])
   @@index([dataType])
 }
 
-// NEW: Payment method-specific fee configuration
 model PaymentMethodFee {
-  id                  String   @id @default(cuid())
-  storeId             String
-  paymentMethod       String   // e.g., "shopify_payments_web", "paypal_web", "stripe_web"
-  displayName         String   // e.g., "Shopify Payments (Online)", "PayPal (Online)"
-  percentageRate      Float    // e.g., 0.029 for 2.9%
-  fixedFee            Float    // e.g., 0.30 for $0.30
-  isActive            Boolean  @default(true)
-  
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  
-  // Relationships
-  store               Store    @relation(fields: [storeId], references: [id])
-  
+  id             String   @id @default(cuid())
+  storeId        String
+  paymentMethod  String
+  displayName    String
+  percentageRate Float
+  fixedFee       Float
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  store          Store    @relation(fields: [storeId], references: [id])
+
   @@unique([storeId, paymentMethod])
   @@index([storeId])
   @@index([paymentMethod])
+}
+
+model Customer {
+  id        String   @id
+  firstName String
+  lastName  String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  Order     Order[]
 }
