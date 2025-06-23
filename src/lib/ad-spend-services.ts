@@ -465,21 +465,30 @@ export class AdSpendService {
       for (const adSpend of allAdSpendData) {
         await prisma.adSpend.upsert({
           where: {
-            // For now, using id-based approach since composite key needs schema update
-            id: `${storeId}_${adSpend.platform}_${adSpend.date}_${adSpend.campaignId}`
+            storeId_platform_campaignId_adsetId_date: {
+              storeId,
+              platform: adSpend.platform,
+              campaignId: adSpend.campaignId || '',
+              adsetId: '',
+              date: new Date(adSpend.date)
+            }
           },
           update: {
-            amount: adSpend.spend,
-            description: `Impressions: ${adSpend.impressions}, Clicks: ${adSpend.clicks}, Conversions: ${adSpend.conversions}`
+            spend: adSpend.spend,
+            impressions: adSpend.impressions || 0,
+            clicks: adSpend.clicks || 0,
+            conversions: adSpend.conversions || 0
           },
           create: {
-            id: `${storeId}_${adSpend.platform}_${adSpend.date}_${adSpend.campaignId}`,
             storeId,
             platform: adSpend.platform,
             date: new Date(adSpend.date),
-            campaign: adSpend.campaignName,
-            amount: adSpend.spend,
-            description: `Impressions: ${adSpend.impressions}, Clicks: ${adSpend.clicks}, Conversions: ${adSpend.conversions}`
+            campaignId: adSpend.campaignId,
+            campaignName: adSpend.campaignName,
+            spend: adSpend.spend,
+            impressions: adSpend.impressions || 0,
+            clicks: adSpend.clicks || 0,
+            conversions: adSpend.conversions || 0
           }
         })
       }
@@ -551,17 +560,17 @@ export class AdSpendService {
         }
       })
 
-      const totalSpend = adSpendData.reduce((sum, record) => sum + record.amount, 0)
+      const totalSpend = adSpendData.reduce((sum, record) => sum + record.spend, 0)
 
       const platformBreakdown = adSpendData.reduce((acc, record) => {
         const existing = acc.find(p => p.platform === record.platform)
         if (existing) {
-          existing.spend += record.amount
+          existing.spend += record.spend
           existing.campaigns += 1
         } else {
           acc.push({
             platform: record.platform,
-            spend: record.amount,
+            spend: record.spend,
             campaigns: 1
           })
         }
@@ -572,11 +581,11 @@ export class AdSpendService {
         const dateStr = record.date.toISOString().split('T')[0]
         const existing = acc.find(d => d.date === dateStr)
         if (existing) {
-          existing.spend += record.amount
+          existing.spend += record.spend
         } else {
           acc.push({
             date: dateStr,
-            spend: record.amount
+            spend: record.spend
           })
         }
         return acc

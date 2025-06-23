@@ -256,20 +256,69 @@ model VariableCost {
 }
 
 model AdSpend {
-  id          String   @id @default(uuid())
-  storeId     String
-  platform    String
-  amount      Float
-  date        DateTime
-  campaign    String?
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  store       Store    @relation(fields: [storeId], references: [id])
+  id              String   @id @default(uuid())
+  storeId         String
+  
+  // Platform identification
+  platform        String   // google_ads, facebook_ads, tiktok_ads, etc.
+  accountId       String?  // Ad account ID from platform
+  accountName     String?  // Ad account name
+  
+  // Campaign hierarchy
+  campaignId      String?  // Platform-specific campaign ID
+  campaignName    String?  // Campaign name
+  adsetId         String?  // Adset/Ad Group ID
+  adsetName       String?  // Adset/Ad Group name
+  adId            String?  // Individual ad ID
+  adName          String?  // Individual ad name
+  
+  // Performance metrics
+  spend           Float    // Total spend amount
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  conversions     Int      @default(0)
+  conversionValue Float    @default(0)
+  
+  // Attribution tracking (UTM parameters)
+  utmSource       String?  // utm_source (google, facebook)
+  utmMedium       String?  // utm_medium (cpc, social)
+  utmCampaign     String?  // utm_campaign (summer_sale_2025)
+  utmTerm         String?  // utm_term (t-shirts)
+  utmContent      String?  // utm_content (ad_variant_a)
+  
+  // Calculated metrics
+  cpc             Float?   // Cost per click (spend / clicks)
+  cpm             Float?   // Cost per mille (spend / impressions * 1000)
+  ctr             Float?   // Click-through rate (clicks / impressions)
+  roas            Float?   // Return on ad spend (conversion_value / spend)
+  
+  // Temporal data
+  date            DateTime // The date this data represents
+  
+  // Metadata
+  currency        String   @default("USD")
+  timezone        String?  // Timezone for the date
+  dataSource      String   @default("n8n_webhook") // n8n_webhook, direct_api, manual
+  rawData         Json?    // Store original platform response for debugging
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  store           Store    @relation(fields: [storeId], references: [id])
 
+  // Indexes for performance
   @@index([storeId])
   @@index([platform])
   @@index([date])
+  @@index([campaignId])
+  @@index([utmCampaign])
+  @@index([storeId, platform, date])
+  @@index([storeId, date])
+  
+  // Unique constraint to prevent duplicates
+  @@unique([storeId, platform, campaignId, adsetId, date])
 }
 
 model AdSpendIntegration {
