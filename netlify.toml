@@ -8,6 +8,8 @@
 [build.environment]
   NEXT_USE_NETLIFY_EDGE = "true"
   NEXT_PRIVATE_TARGET = "server"
+  SHIPPING_SUPABASE_URL = ""
+  SHIPPING_SUPABASE_ANON_KEY = ""
 
 [[redirects]]
   from = "/*"
