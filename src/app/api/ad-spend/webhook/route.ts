@@ -142,119 +142,44 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // 5. Calculate derived metrics
-    const calculatedMetrics = calculateMetrics(data)
-    
-    // 6. Prepare upsert data
+    // 5. Prepare data for database (using actual database fields)
     const adSpendData = {
       storeId: store.id,
       platform: data.platform,
-      accountId: data.accountId || undefined,
-      accountName: data.accountName || undefined,
-      campaignId: data.campaignId || undefined,
-      campaignName: data.campaignName || undefined,
-      adsetId: data.adsetId || undefined,
-      adsetName: data.adsetName || undefined,
-      adId: data.adId || undefined,
-      adName: data.adName || undefined,
-      spend: data.spend,
-      impressions: data.impressions || 0,
-      clicks: data.clicks || 0,
-      conversions: data.conversions || 0,
-      conversionValue: data.conversionValue || 0,
-      utmSource: data.utmSource || undefined,
-      utmMedium: data.utmMedium || undefined,
-      utmCampaign: data.utmCampaign || undefined,
-      utmTerm: data.utmTerm || undefined,
-      utmContent: data.utmContent || undefined,
-      cpc: calculatedMetrics.cpc || undefined,
-      cpm: calculatedMetrics.cpm || undefined,
-      ctr: calculatedMetrics.ctr || undefined,
-      roas: calculatedMetrics.roas || undefined,
+      accountId: data.accountId || 'default-account', // Required field in database
+      campaignId: data.campaignId || null,
+      amount: data.spend, // Database uses 'amount' not 'spend'
       date: parsedDate,
-      currency: data.currency || 'USD',
-      timezone: data.timezone || undefined,
-      dataSource: 'n8n_webhook',
-      rawData: data.rawData || undefined,
+      lastSync: new Date() // Required field in database
     }
     
-    // 7. Upsert ad spend record (prevent duplicates)
-    const adSpend = await prisma.adSpend.upsert({
-      where: {
-        storeId_platform_campaignId_adsetId_date: {
-          storeId: store.id,
-          platform: data.platform,
-          campaignId: data.campaignId || '',
-          adsetId: data.adsetId || '',
-          date: parsedDate
-        }
-      },
-      update: {
-        spend: data.spend,
-        impressions: data.impressions || 0,
-        clicks: data.clicks || 0,
-        conversions: data.conversions || 0,
-        conversionValue: data.conversionValue || 0,
-        accountId: data.accountId,
-        accountName: data.accountName,
-        campaignName: data.campaignName,
-        adsetName: data.adsetName,
-        adId: data.adId,
-        adName: data.adName,
-        utmSource: data.utmSource,
-        utmMedium: data.utmMedium,
-        utmCampaign: data.utmCampaign,
-        utmTerm: data.utmTerm,
-        utmContent: data.utmContent,
-        cpc: calculatedMetrics.cpc,
-        cpm: calculatedMetrics.cpm,
-        ctr: calculatedMetrics.ctr,
-        roas: calculatedMetrics.roas,
-        currency: data.currency || 'USD',
-        timezone: data.timezone,
-        rawData: data.rawData,
-        updatedAt: new Date()
-      },
-      create: adSpendData
+    // 6. Create ad spend record (simple create since no unique constraint exists)
+    const adSpend = await prisma.adSpend.create({
+      data: adSpendData
     })
     
     console.log('✅ Ad spend data saved:', {
       id: adSpend.id,
       platform: adSpend.platform,
-      spend: adSpend.spend,
-      campaignName: adSpend.campaignName,
-      isNew: !adSpend.updatedAt || adSpend.createdAt.getTime() === adSpend.updatedAt.getTime()
+      amount: adSpend.amount,
+      campaignId: adSpend.campaignId
     })
     
-    // 8. Return success response
+    // 7. Return success response
     return NextResponse.json({
       success: true,
       message: 'Ad spend data processed successfully',
       data: {
         id: adSpend.id,
         platform: adSpend.platform,
-        spend: adSpend.spend,
+        amount: adSpend.amount,
         date: adSpend.date.toISOString().split('T')[0],
-        campaignName: adSpend.campaignName,
-        calculatedMetrics: {
-          cpc: adSpend.cpc,
-          cpm: adSpend.cpm,
-          ctr: adSpend.ctr,
-          roas: adSpend.roas
-        }
+        campaignId: adSpend.campaignId
       }
     })
     
   } catch (error) {
     console.error('💥 Webhook processing error:', error)
-    
-    // Handle specific Prisma errors
-    if (error instanceof Error && error.message.includes('Unique constraint')) {
-      return NextResponse.json(
-        { error: 'Duplicate ad spend record detected' },
-        { status: 409 }
-      )
-    }
     
     return NextResponse.json(
       { error: 'Internal server error processing webhook' },
@@ -286,12 +211,7 @@ export async function GET(request: NextRequest) {
       date: 'string (required, YYYY-MM-DD format)',
       campaignId: 'string (optional)',
       campaignName: 'string (optional)',
-      impressions: 'number (optional)',
-      clicks: 'number (optional)',
-      conversions: 'number (optional)',
-      conversionValue: 'number (optional)',
-      utmCampaign: 'string (optional, for attribution)',
-      rawData: 'object (optional, for debugging)'
+      accountId: 'string (optional)'
     }
   })
 } 

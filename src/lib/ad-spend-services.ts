@@ -11,31 +11,37 @@ export interface AdSpendData {
   conversions?: number
 }
 
-export interface GoogleAdsAccount {
+interface GoogleAdsAccount {
+  resourceName: string
   id: string
   name: string
-  customerId: string
-  descriptiveName: string
-  currencyCode: string
-  timeZone: string
-}
-
-export interface FacebookAdAccount {
-  id: string
-  name: string
-  accountId: string
-  accountStatus: string
   currency: string
   timezone: string
 }
 
+interface FacebookAdAccount {
+  id: string
+  name: string
+  account_status: number
+  currency: string
+  timezone_name: string
+}
+
+interface TokenResponse {
+  access_token: string
+  refresh_token?: string
+  expires_in?: number
+  scope?: string
+}
+
 export class AdSpendService {
-  
   /**
-   * Refresh expired access token using refresh token
+   * Refresh an expired access token
    */
   static async refreshAccessToken(integrationId: string): Promise<string | null> {
     try {
+      console.log(`Ad Spend Service - Refreshing token for integration ${integrationId}`)
+
       const integration = await prisma.adSpendIntegration.findUnique({
         where: { id: integrationId }
       })
@@ -45,49 +51,47 @@ export class AdSpendService {
         return null
       }
 
-      let tokenUrl: string
-      let clientId: string | undefined
-      let clientSecret: string | undefined
+      let tokenEndpoint: string
+      let clientId: string
+      let clientSecret: string
 
-      if (integration.platform === 'GOOGLE') {
-        tokenUrl = 'https://oauth2.googleapis.com/token'
-        clientId = process.env.GOOGLE_CLIENT_ID
-        clientSecret = process.env.GOOGLE_CLIENT_SECRET
-      } else if (integration.platform === 'FACEBOOK') {
-        tokenUrl = 'https://graph.facebook.com/v18.0/oauth/access_token'
-        clientId = process.env.FACEBOOK_APP_ID
-        clientSecret = process.env.FACEBOOK_APP_SECRET
-      } else {
-        console.error('Ad Spend Service - Unsupported platform:', integration.platform)
-        return null
+      // Configure endpoint and credentials based on platform
+      switch (integration.platform) {
+        case 'GOOGLE':
+          tokenEndpoint = 'https://oauth2.googleapis.com/token'
+          clientId = process.env.GOOGLE_CLIENT_ID!
+          clientSecret = process.env.GOOGLE_CLIENT_SECRET!
+          break
+        case 'FACEBOOK':
+          tokenEndpoint = 'https://graph.facebook.com/oauth/access_token'
+          clientId = process.env.FACEBOOK_APP_ID!
+          clientSecret = process.env.FACEBOOK_APP_SECRET!
+          break
+        default:
+          console.error('Ad Spend Service - Unsupported platform:', integration.platform)
+          return null
       }
 
-      if (!clientId || !clientSecret) {
-        console.error('Ad Spend Service - Missing OAuth credentials for', integration.platform)
-        return null
-      }
-
-      const tokenData = new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: integration.refreshToken,
-        grant_type: 'refresh_token'
-      })
-
-      const response = await fetch(tokenUrl, {
+      const response = await fetch(tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: tokenData
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: integration.refreshToken,
+          client_id: clientId,
+          client_secret: clientSecret
+        })
       })
 
       if (!response.ok) {
-        console.error('Ad Spend Service - Token refresh failed:', response.statusText)
+        const errorText = await response.text()
+        console.error('Ad Spend Service - Token refresh failed:', response.status, errorText)
         return null
       }
 
-      const tokens = await response.json()
+      const tokens: TokenResponse = await response.json()
       const newAccessToken = tokens.access_token
 
       if (!newAccessToken) {
@@ -113,7 +117,7 @@ export class AdSpendService {
   }
 
   /**
-   * Get Google Ads accounts for the authenticated user
+   * Fetch Google Ads accounts for a store
    */
   static async getGoogleAdsAccounts(storeId: string): Promise<GoogleAdsAccount[]> {
     try {
@@ -135,7 +139,6 @@ export class AdSpendService {
 
       // Check if token is expired and refresh if needed
       if (integration.expiresAt && integration.expiresAt < new Date()) {
-        console.log('Google Ads Service - Token expired, attempting refresh')
         const refreshedToken = await this.refreshAccessToken(integration.id)
         if (refreshedToken) {
           accessToken = refreshedToken
@@ -144,61 +147,72 @@ export class AdSpendService {
         }
       }
 
-      // Fetch accessible customers (Google Ads accounts)
-      const customersUrl = 'https://googleads.googleapis.com/v14/customers:listAccessibleCustomers'
-      const customersResponse = await fetch(customersUrl, {
+      // Fetch accessible accounts
+      const response = await fetch('https://googleads.googleapis.com/v14/customers:listAccessibleCustomers', {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN || ''
+          'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+          'Content-Type': 'application/json'
         }
       })
 
-      if (!customersResponse.ok) {
-        throw new Error(`Failed to fetch Google Ads customers: ${customersResponse.statusText}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Google Ads Service - API error:', response.status, errorText)
+        throw new Error(`Google Ads API error: ${response.status}`)
       }
 
-      const customersData = await customersResponse.json()
-      const accounts: GoogleAdsAccount[] = []
+      const data = await response.json()
+      const resourceNames = data.resourceNames || []
 
-      // Get detailed info for each customer
-      for (const customer of customersData.resourceNames || []) {
-        const customerId = customer.replace('customers/', '')
+      // Get detailed account info for each accessible customer
+      const accounts: GoogleAdsAccount[] = []
+      for (const resourceName of resourceNames) {
+        const customerId = resourceName.split('/')[1]
         
         try {
-          const accountUrl = `https://googleads.googleapis.com/v14/customers/${customerId}`
-          const accountResponse = await fetch(accountUrl, {
+          const accountResponse = await fetch(`https://googleads.googleapis.com/v14/customers/${customerId}`, {
             headers: {
               'Authorization': `Bearer ${accessToken}`,
-              'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN || ''
+              'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+              'Content-Type': 'application/json'
             }
           })
 
           if (accountResponse.ok) {
             const accountData = await accountResponse.json()
             accounts.push({
+              resourceName,
               id: customerId,
               name: accountData.descriptiveName || `Account ${customerId}`,
-              customerId: customerId,
-              descriptiveName: accountData.descriptiveName || '',
-              currencyCode: accountData.currencyCode || 'USD',
-              timeZone: accountData.timeZone || 'UTC'
+              currency: accountData.currencyCode || 'USD',
+              timezone: accountData.timeZone || 'America/New_York'
             })
           }
-        } catch (error) {
-          console.warn('Google Ads Service - Failed to fetch account details for', customerId, error)
+        } catch (accountError) {
+          console.warn(`Failed to fetch details for account ${customerId}:`, accountError)
         }
       }
 
+      // Update integration with account data (cast as any to avoid JSON type issues)
+      await prisma.adSpendIntegration.update({
+        where: { id: integration.id },
+        data: {
+          accountData: { accounts } as any,
+          updatedAt: new Date()
+        }
+      })
+
+      console.log(`Google Ads Service - Found ${accounts.length} accessible accounts`)
       return accounts
     } catch (error) {
-      console.error('Google Ads Service - Error fetching accounts:', error)
-      await this.updateIntegrationError(storeId, 'GOOGLE', error instanceof Error ? error.message : 'Unknown error')
+      console.error('Google Ads Service - Error fetching accounts:', error instanceof Error ? error.message : String(error))
       return []
     }
   }
 
   /**
-   * Get Facebook Ad accounts for the authenticated user
+   * Fetch Facebook Ad accounts for a store
    */
   static async getFacebookAdAccounts(storeId: string): Promise<FacebookAdAccount[]> {
     try {
@@ -218,9 +232,8 @@ export class AdSpendService {
 
       let accessToken = integration.accessToken
 
-      // Facebook tokens typically don't expire as quickly, but we should still check
+      // Check if token is expired and refresh if needed
       if (integration.expiresAt && integration.expiresAt < new Date()) {
-        console.log('Facebook Ads Service - Token expired, attempting refresh')
         const refreshedToken = await this.refreshAccessToken(integration.id)
         if (refreshedToken) {
           accessToken = refreshedToken
@@ -230,27 +243,31 @@ export class AdSpendService {
       }
 
       // Fetch ad accounts
-      const adAccountsUrl = `https://graph.facebook.com/v18.0/me/adaccounts?access_token=${accessToken}&fields=id,name,account_id,account_status,currency,timezone_name`
-      const response = await fetch(adAccountsUrl)
+      const response = await fetch(`https://graph.facebook.com/v18.0/me/adaccounts?fields=id,name,account_status,currency,timezone_name&access_token=${accessToken}`)
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch Facebook ad accounts: ${response.statusText}`)
+        const errorText = await response.text()
+        console.error('Facebook Ads Service - API error:', response.status, errorText)
+        throw new Error(`Facebook Ads API error: ${response.status}`)
       }
 
       const data = await response.json()
-      const accounts: FacebookAdAccount[] = (data.data || []).map((account: any) => ({
-        id: account.id,
-        name: account.name,
-        accountId: account.account_id,
-        accountStatus: account.account_status || 'UNKNOWN',
-        currency: account.currency || 'USD',
-        timezone: account.timezone_name || 'UTC'
-      }))
+      const accounts = data.data || []
 
+      // Update integration with account data (cast as any to avoid JSON type issues)
+      await prisma.adSpendIntegration.update({
+        where: { id: integration.id },
+        data: {
+          accountData: { accounts } as any,
+          updatedAt: new Date()
+        }
+      })
+
+      console.log(`Facebook Ads Service - Found ${accounts.length} ad accounts`)
       return accounts
+
     } catch (error) {
-      console.error('Facebook Ads Service - Error fetching accounts:', error)
-      await this.updateIntegrationError(storeId, 'FACEBOOK', error instanceof Error ? error.message : 'Unknown error')
+      console.error('Facebook Ads Service - Error fetching accounts:', error instanceof Error ? error.message : String(error))
       return []
     }
   }
@@ -290,60 +307,66 @@ export class AdSpendService {
       const allAdSpendData: AdSpendData[] = []
 
       for (const account of accounts) {
-        try {
-          // Google Ads Reporting API query
-          const query = `
-            SELECT 
-              segments.date,
-              campaign.id,
-              campaign.name,
-              metrics.cost_micros,
-              metrics.impressions,
-              metrics.clicks,
-              metrics.conversions
-            FROM campaign 
-            WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
-          `
+        const customerId = account.id
 
-          const reportUrl = `https://googleads.googleapis.com/v14/customers/${account.customerId}/googleAds:search`
-          const response = await fetch(reportUrl, {
+        const query = `
+          SELECT 
+            campaign.id,
+            campaign.name,
+            segments.date,
+            metrics.cost_micros,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.conversions
+          FROM campaign 
+          WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        `
+
+        try {
+          const response = await fetch(`https://googleads.googleapis.com/v14/customers/${customerId}/googleAds:searchStream`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${accessToken}`,
-              'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '',
+              'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ query })
           })
 
           if (!response.ok) {
-            console.warn('Google Ads Service - Failed to fetch data for account', account.customerId, response.statusText)
+            console.warn(`Failed to fetch data for account ${customerId}:`, response.status)
             continue
           }
 
           const data = await response.json()
-          
-          for (const row of data.results || []) {
+          const results = data.results || []
+
+          for (const result of results) {
+            const campaign = result.campaign
+            const segments = result.segments
+            const metrics = result.metrics
+
             allAdSpendData.push({
-              date: row.segments.date,
+              date: segments.date,
               platform: 'GOOGLE',
-              campaignId: row.campaign.id,
-              campaignName: row.campaign.name,
-              spend: (row.metrics.costMicros || 0) / 1000000, // Convert micros to dollars
-              impressions: row.metrics.impressions || 0,
-              clicks: row.metrics.clicks || 0,
-              conversions: row.metrics.conversions || 0
+              campaignId: campaign.id,
+              campaignName: campaign.name,
+              spend: (metrics.costMicros || 0) / 1000000, // Convert micros to dollars
+              impressions: metrics.impressions || 0,
+              clicks: metrics.clicks || 0,
+              conversions: metrics.conversions || 0
             })
           }
-        } catch (error) {
-          console.warn('Google Ads Service - Failed to fetch data for account', account.customerId, error)
+        } catch (accountError) {
+          console.warn(`Error fetching data for Google Ads account ${customerId}:`, accountError)
         }
       }
 
+      console.log(`Google Ads Service - Fetched ${allAdSpendData.length} records`)
       return allAdSpendData
+
     } catch (error) {
-      console.error('Google Ads Service - Error fetching ad spend data:', error)
-      await this.updateIntegrationError(storeId, 'GOOGLE', error instanceof Error ? error.message : 'Unknown error')
+      console.error('Google Ads Service - Error fetching data:', error instanceof Error ? error.message : String(error))
       return []
     }
   }
@@ -384,55 +407,48 @@ export class AdSpendService {
 
       for (const account of accounts) {
         try {
-          // Fetch campaigns for this ad account
-          const campaignsUrl = `https://graph.facebook.com/v18.0/${account.id}/campaigns?access_token=${accessToken}&fields=id,name&limit=100`
-          const campaignsResponse = await fetch(campaignsUrl)
+          const response = await fetch(
+            `https://graph.facebook.com/v18.0/${account.id}/insights?` +
+            `fields=campaign_id,campaign_name,date_start,spend,impressions,clicks,actions&` +
+            `time_range={'since':'${startDate}','until':'${endDate}'}&` +
+            `level=campaign&` +
+            `access_token=${accessToken}`
+          )
 
-          if (!campaignsResponse.ok) {
-            console.warn('Facebook Ads Service - Failed to fetch campaigns for account', account.accountId)
+          if (!response.ok) {
+            console.warn(`Failed to fetch data for Facebook account ${account.id}:`, response.status)
             continue
           }
 
-          const campaignsData = await campaignsResponse.json()
+          const data = await response.json()
+          const insights = data.data || []
 
-          for (const campaign of campaignsData.data || []) {
-            // Fetch insights for each campaign
-            const insightsUrl = `https://graph.facebook.com/v18.0/${campaign.id}/insights?access_token=${accessToken}&time_range={"since":"${startDate}","until":"${endDate}"}&fields=campaign_id,campaign_name,date_start,spend,impressions,clicks,actions&time_increment=1&level=campaign`
-            const insightsResponse = await fetch(insightsUrl)
+          for (const insight of insights) {
+            // Type the actions properly to avoid any type error
+            const conversions = insight.actions ? 
+              insight.actions.find((action: { action_type: string; value?: string }) => action.action_type === 'purchase')?.value || 0 : 0
 
-            if (!insightsResponse.ok) {
-              console.warn('Facebook Ads Service - Failed to fetch insights for campaign', campaign.id)
-              continue
-            }
-
-            const insightsData = await insightsResponse.json()
-
-            for (const insight of insightsData.data || []) {
-              const conversions = insight.actions?.find((action: any) => 
-                action.action_type === 'purchase' || action.action_type === 'offsite_conversion.fb_pixel_purchase'
-              )?.value || 0
-
-              allAdSpendData.push({
-                date: insight.date_start,
-                platform: 'FACEBOOK',
-                campaignId: insight.campaign_id,
-                campaignName: insight.campaign_name,
-                spend: parseFloat(insight.spend || '0'),
-                impressions: parseInt(insight.impressions || '0'),
-                clicks: parseInt(insight.clicks || '0'),
-                conversions: parseInt(conversions)
-              })
-            }
+            allAdSpendData.push({
+              date: insight.date_start,
+              platform: 'FACEBOOK',
+              campaignId: insight.campaign_id,
+              campaignName: insight.campaign_name,
+              spend: parseFloat(insight.spend || '0'),
+              impressions: parseInt(insight.impressions || '0'),
+              clicks: parseInt(insight.clicks || '0'),
+              conversions: parseInt(conversions)
+            })
           }
-        } catch (error) {
-          console.warn('Facebook Ads Service - Failed to fetch data for account', account.accountId, error)
+        } catch (accountError) {
+          console.warn(`Error fetching data for Facebook account ${account.id}:`, accountError)
         }
       }
 
+      console.log(`Facebook Ads Service - Fetched ${allAdSpendData.length} records`)
       return allAdSpendData
+
     } catch (error) {
-      console.error('Facebook Ads Service - Error fetching ad spend data:', error)
-      await this.updateIntegrationError(storeId, 'FACEBOOK', error instanceof Error ? error.message : 'Unknown error')
+      console.error('Facebook Ads Service - Error fetching data:', error instanceof Error ? error.message : String(error))
       return []
     }
   }
@@ -461,47 +477,29 @@ export class AdSpendService {
 
       console.log(`Ad Spend Service - Found ${allAdSpendData.length} ad spend records`)
 
-      // Save to database - need to update schema for this composite key
+      // Save to database using actual database fields
       for (const adSpend of allAdSpendData) {
-        await prisma.adSpend.upsert({
-          where: {
-            storeId_platform_campaignId_adsetId_date: {
-              storeId,
-              platform: adSpend.platform,
-              campaignId: adSpend.campaignId || '',
-              adsetId: '',
-              date: new Date(adSpend.date)
-            }
-          },
-          update: {
-            spend: adSpend.spend,
-            impressions: adSpend.impressions || 0,
-            clicks: adSpend.clicks || 0,
-            conversions: adSpend.conversions || 0
-          },
-          create: {
+        await prisma.adSpend.create({
+          data: {
             storeId,
             platform: adSpend.platform,
-            date: new Date(adSpend.date),
             campaignId: adSpend.campaignId,
-            campaignName: adSpend.campaignName,
-            spend: adSpend.spend,
-            impressions: adSpend.impressions || 0,
-            clicks: adSpend.clicks || 0,
-            conversions: adSpend.conversions || 0
+            accountId: 'api-sync', // Required field
+            amount: adSpend.spend, // Database uses 'amount' not 'spend'
+            date: new Date(adSpend.date),
+            lastSync: new Date() // Required field
           }
         })
       }
 
-      // Update sync timestamps
+      // Update sync timestamps (removed errorMessage field reference)
       await prisma.adSpendIntegration.updateMany({
         where: {
           storeId,
           isActive: true
         },
         data: {
-          lastSyncAt: new Date(),
-          errorMessage: null
+          lastSyncAt: new Date()
         }
       })
 
@@ -509,28 +507,6 @@ export class AdSpendService {
     } catch (error) {
       console.error('Ad Spend Service - Error during sync:', error)
       throw error
-    }
-  }
-
-  /**
-   * Update integration error message
-   */
-  private static async updateIntegrationError(storeId: string, platform: string, errorMessage: string): Promise<void> {
-    try {
-      await prisma.adSpendIntegration.update({
-        where: {
-          storeId_platform: {
-            storeId,
-            platform
-          }
-        },
-        data: {
-          errorMessage,
-          updatedAt: new Date()
-        }
-      })
-    } catch (error) {
-      console.error('Ad Spend Service - Failed to update error message:', error)
     }
   }
 
@@ -560,17 +536,17 @@ export class AdSpendService {
         }
       })
 
-      const totalSpend = adSpendData.reduce((sum, record) => sum + record.spend, 0)
+      const totalSpend = adSpendData.reduce((sum, record) => sum + record.amount, 0) // Using 'amount' field
 
       const platformBreakdown = adSpendData.reduce((acc, record) => {
         const existing = acc.find(p => p.platform === record.platform)
         if (existing) {
-          existing.spend += record.spend
+          existing.spend += record.amount // Using 'amount' field
           existing.campaigns += 1
         } else {
           acc.push({
             platform: record.platform,
-            spend: record.spend,
+            spend: record.amount, // Using 'amount' field
             campaigns: 1
           })
         }
@@ -581,11 +557,11 @@ export class AdSpendService {
         const dateStr = record.date.toISOString().split('T')[0]
         const existing = acc.find(d => d.date === dateStr)
         if (existing) {
-          existing.spend += record.spend
+          existing.spend += record.amount // Using 'amount' field
         } else {
           acc.push({
             date: dateStr,
-            spend: record.spend
+            spend: record.amount // Using 'amount' field
           })
         }
         return acc

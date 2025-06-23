@@ -220,47 +220,21 @@ model VariableCost {
 }
 
 model AdSpend {
-  id              String   @id @default(uuid())
-  storeId         String
-  platform        String
-  spend           Float
-  date            DateTime
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  accountId       String?
-  campaignId      String?
-  adsetId         String?
-  adsetName       String?
-  adId            String?
-  adName          String?
-  clicks          Int?     @default(0)
-  conversions     Int?     @default(0)
-  conversionValue Float?   @default(0)
-  utmMedium       String?
-  utmCampaign     String?
-  utmTerm         String?
-  utmContent      String?
-  cpm             Float?
-  ctr             Float?
-  roas            Float?
-  timezone        String?
-  dataSource      String?  @default("n8n_webhook")
-  rawData         Json?
-  campaignName    String?
-  impressions     Int?     @default(0)
-  utmSource       String?
-  cpc             Float?
-  currency        String?  @default("USD")
-  accountName     String?
-  store           Store    @relation(fields: [storeId], references: [id])
+  id         String   @id @default(uuid())
+  storeId    String
+  platform   String
+  amount     Float
+  date       DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  accountId  String
+  campaignId String?
+  lastSync   DateTime
+  store      Store    @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
   @@index([platform, accountId])
-  @@index([campaignId])
   @@index([date])
-  @@index([storeId, date])
-  @@index([storeId, platform, date])
-  @@index([utmCampaign])
 }
 
 model AdSpendIntegration {

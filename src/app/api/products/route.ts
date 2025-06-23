@@ -311,15 +311,16 @@ export async function GET(request: NextRequest) {
     // First, try to find an active store with a real access token (not placeholder)
     let store = await prisma.store.findFirst({
       where: {
-        isActive: true,
         accessToken: {
           not: 'pending-setup'
         }
       },
-      select: { id: true, domain: true, accessToken: true },
-      orderBy: {
-        updatedAt: 'desc' // Get the most recently updated store
-      }
+      select: { 
+        id: true, 
+        domain: true, 
+        accessToken: true 
+      },
+      orderBy: { updatedAt: 'desc' }
     })
 
     // If no active store with real token, fall back to any active store
@@ -327,12 +328,16 @@ export async function GET(request: NextRequest) {
       console.log('Products API - No active store with real token found, trying any active store')
       store = await prisma.store.findFirst({
         where: {
-          isActive: true
+          accessToken: {
+            not: 'pending-setup'
+          }
         },
-        select: { id: true, domain: true, accessToken: true },
-        orderBy: {
-          updatedAt: 'desc'
-        }
+        select: { 
+          id: true, 
+          domain: true, 
+          accessToken: true 
+        },
+        orderBy: { updatedAt: 'desc' }
       })
     }
 
@@ -340,10 +345,12 @@ export async function GET(request: NextRequest) {
     if (!store) {
       console.log('Products API - No active store found, trying any store')
       store = await prisma.store.findFirst({
-        select: { id: true, domain: true, accessToken: true },
-        orderBy: {
-          updatedAt: 'desc'
-        }
+        select: { 
+          id: true, 
+          domain: true, 
+          accessToken: true 
+        },
+        orderBy: { updatedAt: 'desc' }
       })
     }
 
