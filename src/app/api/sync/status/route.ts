@@ -51,6 +51,61 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // ✅ DEBUG: Log what we found in the database
+    if (activeOrdersSync) {
+      console.log(`🔍 SYNC STATUS DEBUG - Found active sync in database:`)
+      console.log(`   ID: ${activeOrdersSync.id}`)
+      console.log(`   Store ID: ${activeOrdersSync.storeId}`)
+      console.log(`   Sync In Progress: ${activeOrdersSync.syncInProgress}`)
+      console.log(`   Last Heartbeat: ${activeOrdersSync.lastHeartbeat}`)
+      console.log(`   Last Sync At: ${activeOrdersSync.lastSyncAt}`)
+      console.log(`   Timeframe Days: ${activeOrdersSync.timeframeDays}`)
+      console.log(`   Error Message: ${activeOrdersSync.errorMessage}`)
+      
+      // Check if this is a "ghost" sync (marked active but no recent heartbeat)
+      const now = new Date()
+      const heartbeatAge = activeOrdersSync.lastHeartbeat ? 
+        (now.getTime() - new Date(activeOrdersSync.lastHeartbeat).getTime()) / 1000 / 60 : // minutes
+        null
+      
+      if (heartbeatAge && heartbeatAge > 15) {
+        console.log(`🚨 GHOST SYNC DETECTED: Last heartbeat was ${heartbeatAge.toFixed(1)} minutes ago!`)
+        console.log(`   This sync is marked active but appears to be dead`)
+        console.log(`   💀 AUTO-FIXING: Marking ghost sync as completed`)
+        
+        // Automatically fix ghost syncs
+        await (prisma as any).syncStatus.update({
+          where: { id: activeOrdersSync.id },
+          data: {
+            syncInProgress: false,
+            lastHeartbeat: null,
+            errorMessage: `Auto-completed ghost sync (stale heartbeat: ${heartbeatAge.toFixed(1)}min)`
+          }
+        })
+        
+        console.log(`✅ Ghost sync cleaned up automatically`)
+      } else if (!activeOrdersSync.lastHeartbeat) {
+        console.log(`🚨 GHOST SYNC DETECTED: No heartbeat recorded!`)
+        console.log(`   💀 AUTO-FIXING: Marking sync without heartbeat as completed`)
+        
+        // Automatically fix syncs with no heartbeat
+        await (prisma as any).syncStatus.update({
+          where: { id: activeOrdersSync.id },
+          data: {
+            syncInProgress: false,
+            lastHeartbeat: null,
+            errorMessage: 'Auto-completed ghost sync (no heartbeat)'
+          }
+        })
+        
+        console.log(`✅ Ghost sync cleaned up automatically`)
+      } else {
+        console.log(`✅ Heartbeat is recent: ${heartbeatAge?.toFixed(1)} minutes ago`)
+      }
+    } else {
+      console.log(`🔍 SYNC STATUS DEBUG - No active sync found in database`)
+    }
+
     // Use sync's stored timeframe if active, otherwise use UI timeframe
     const effectiveTimeframe = activeOrdersSync?.timeframeDays 
       ? `${activeOrdersSync.timeframeDays}d`
@@ -90,13 +145,13 @@ export async function GET(request: NextRequest) {
     // Get sync status and counts in parallel
     const [syncStatuses, localOrdersCount, totalOrdersFromShopify] = await Promise.all([
       // Get sync status for all data types
-      prisma.syncStatus.findMany({
+      (prisma as any).syncStatus.findMany({
         where: { storeId },
         orderBy: { lastSyncAt: 'desc' }
       }),
       
       // Get count of synced orders in the timeframe
-      prisma.shopifyOrder.count({
+      (prisma as any).shopifyOrder.count({
         where: {
           storeId,
           createdAt: {
@@ -120,8 +175,8 @@ export async function GET(request: NextRequest) {
       : 0
 
     // Get sync status records for reference
-    const ordersSyncStatus = syncStatuses.find(s => s.dataType === 'orders')
-    const productsSyncStatus = syncStatuses.find(s => s.dataType === 'products')
+    const ordersSyncStatus = syncStatuses.find((s: any) => s.dataType === 'orders')
+    const productsSyncStatus = syncStatuses.find((s: any) => s.dataType === 'products')
 
     // ✅ AUTO-CLEANUP: Check if sync is complete but stuck with syncInProgress=true
     let isSyncActive = ordersSyncStatus?.syncInProgress || false

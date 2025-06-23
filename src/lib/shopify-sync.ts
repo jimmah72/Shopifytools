@@ -390,7 +390,6 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
           })
           
           updatedOrdersCount++
-          processedCount++
           
         } catch (error) {
           errorCount++
@@ -399,6 +398,7 @@ export async function syncShopifyOrders(storeId: string, timeframeDays: number =
           // Continue with next order - this is the key to not getting stuck
         }
         
+        // ✅ FIX: Only increment once per order (not twice!)
         processedCount++
         
         // Progress logging every 100 orders
