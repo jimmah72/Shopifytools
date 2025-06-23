@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, RefreshCw, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { Loader2, RefreshCw, CheckCircle, AlertCircle, Clock, StopCircle } from 'lucide-react';
 
 interface ProductsSyncStatus {
   syncInProgress: boolean;
@@ -91,6 +91,29 @@ export function ProductsSyncBanner({ onSyncStart, onSyncComplete }: ProductsSync
     }
   };
 
+  const handleStopSync = async () => {
+    if (!syncStatus?.syncInProgress) return;
+    
+    try {
+      setIsLoading(true);
+      
+      const response = await fetch('/api/products/sync', {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to stop sync');
+      }
+
+      console.log('Products sync stopped successfully');
+      // Status will be updated by polling
+    } catch (error) {
+      console.error('Error stopping sync:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString('en-US', {
       month: 'short',
@@ -141,13 +164,25 @@ export function ProductsSyncBanner({ onSyncStart, onSyncComplete }: ProductsSync
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-sm font-medium text-gray-200">
-                {syncStatus.processedProducts} / {syncStatus.totalProducts}
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-sm font-medium text-gray-200">
+                  {syncStatus.processedProducts} / {syncStatus.totalProducts}
+                </div>
+                <div className="text-xs text-gray-400">
+                  {syncStatus.costDataUpdated} costs updated
+                </div>
               </div>
-              <div className="text-xs text-gray-400">
-                {syncStatus.costDataUpdated} costs updated
-              </div>
+              <Button 
+                onClick={handleStopSync}
+                variant="outline" 
+                size="sm"
+                disabled={isLoading}
+                className="border-red-600 text-red-400 hover:bg-red-600/10"
+              >
+                <StopCircle className="h-4 w-4 mr-2" />
+                Stop Sync
+              </Button>
             </div>
           </div>
           

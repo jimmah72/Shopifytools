@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getProductsSyncStatus } from '@/lib/products-sync-status';
 
 // Mark route as dynamic
 export const dynamic = 'force-dynamic';
@@ -11,12 +12,15 @@ export async function GET() {
       return NextResponse.json({ error: 'No store found' }, { status: 404 });
     }
 
-    // ✅ FIXED: Check orders sync status since that's what actually updates product costs
+    // Get the shared products sync status
+    const sharedSyncStatus = getProductsSyncStatus();
+    
+    // Also check database sync status for fallback
     const dbSyncStatus = await (prisma as any).syncStatus.findUnique({
       where: {
         storeId_dataType: {
           storeId: store.id,
-          dataType: 'orders'
+          dataType: 'products_costs'
         }
       }
     });
@@ -46,17 +50,18 @@ export async function GET() {
       nextSync.setDate(nextSync.getDate() + 1);
     }
 
-        const status = {
-      syncInProgress: dbSyncStatus?.syncInProgress || false,
-      syncType: dbSyncStatus?.syncInProgress ? 'orders_sync_updating_costs' : null,
-      totalProducts,
-      processedProducts: totalProducts,
-      currentProduct: dbSyncStatus?.syncInProgress ? 'Updating product costs from orders sync...' : '',
-      lastSyncAt: dbSyncStatus?.lastSyncAt?.toISOString() || null,
+    // Use the shared sync status if sync is in progress, otherwise use database/calculated values
+    const status = {
+      syncInProgress: sharedSyncStatus.syncInProgress,
+      syncType: sharedSyncStatus.syncType,
+      totalProducts: sharedSyncStatus.syncInProgress ? sharedSyncStatus.totalProducts : totalProducts,
+      processedProducts: sharedSyncStatus.processedProducts,
+      currentProduct: sharedSyncStatus.currentProduct,
+      lastSyncAt: sharedSyncStatus.lastSyncAt || dbSyncStatus?.lastSyncAt?.toISOString() || null,
       nextAutoSync: nextSync.toISOString(),
-      errorMessage: dbSyncStatus?.errorMessage || null,
-      costDataUpdated: 0,
-      productsWithCostData
+      errorMessage: sharedSyncStatus.errorMessage || dbSyncStatus?.errorMessage || null,
+      costDataUpdated: sharedSyncStatus.costDataUpdated,
+      productsWithCostData: sharedSyncStatus.syncInProgress ? sharedSyncStatus.productsWithCostData : productsWithCostData
     };
 
     return NextResponse.json(status);

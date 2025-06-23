@@ -10,10 +10,9 @@ export async function GET() {
   try {
     console.log('Store API - Attempting to find active store with real connection')
     
-    // First, try to find an active store with a real access token (not placeholder)
+    // First, try to find a store with a real access token (not placeholder)
     let store = await prisma.store.findFirst({
       where: {
-        isActive: true,
         accessToken: {
           not: 'pending-setup'
         }
@@ -30,27 +29,6 @@ export async function GET() {
         updatedAt: 'desc' // Get the most recently updated store
       }
     })
-
-    // If no active store with real token, fall back to any active store
-    if (!store) {
-      console.log('Store API - No active store with real token found, trying any active store')
-      store = await prisma.store.findFirst({
-        where: {
-          isActive: true
-        },
-        include: {
-          _count: {
-            select: {
-              products: true,
-              orders: true,
-            },
-          },
-        },
-        orderBy: {
-          updatedAt: 'desc'
-        }
-      })
-    }
 
     // Last resort: any store at all
     if (!store) {
@@ -129,12 +107,11 @@ export async function PUT(request: NextRequest) {
 export async function DELETE() {
   console.log('Store API - DELETE request received')
   try {
-    console.log('Store API - Attempting to find active store to archive')
+    console.log('Store API - Attempting to find store to archive')
     
-    // Find the active store (prioritize real connections)
+    // Find a store (prioritize real connections)
     let store = await prisma.store.findFirst({
       where: {
-        isActive: true,
         accessToken: {
           not: 'pending-setup'
         }
@@ -143,17 +120,6 @@ export async function DELETE() {
         updatedAt: 'desc'
       }
     })
-
-    if (!store) {
-      store = await prisma.store.findFirst({
-        where: {
-          isActive: true
-        },
-        orderBy: {
-          updatedAt: 'desc'
-        }
-      })
-    }
     
     if (!store) {
       console.log('Store API - No active store found to disconnect')
@@ -169,8 +135,7 @@ export async function DELETE() {
     const archivedStore = await prisma.store.update({
       where: { id: store.id },
       data: {
-        isActive: false,
-        isArchived: true
+        name: store.name + ' (Archived)'  // Just mark it in the name for now
       }
     })
 

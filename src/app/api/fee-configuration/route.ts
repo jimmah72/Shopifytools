@@ -4,14 +4,36 @@ import { prisma } from '@/lib/prisma';
 // GET - Fetch fee configuration for a store
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const storeId = searchParams.get('storeId');
+    // Get store ID automatically (same logic as dashboard API)
+    let store = await prisma.store.findFirst({
+      where: {
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
+      select: { id: true, domain: true },
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    });
 
-    if (!storeId) {
-      return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
+    // Fallback to any store
+    if (!store) {
+      store = await prisma.store.findFirst({
+        select: { id: true, domain: true },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      });
     }
 
-    let feeConfiguration = await prisma.feeConfiguration.findUnique({
+    if (!store) {
+      return NextResponse.json({ error: 'No store connected. Please connect a Shopify store first.' }, { status: 404 });
+    }
+
+    const storeId = store.id;
+
+    let feeConfiguration = await (prisma as any).feeConfiguration.findUnique({
       where: { storeId }
     });
 
@@ -19,7 +41,7 @@ export async function GET(request: NextRequest) {
     if (!feeConfiguration) {
       console.log('📊 Creating default fee configuration for store:', storeId);
       
-      feeConfiguration = await prisma.feeConfiguration.create({
+      feeConfiguration = await (prisma as any).feeConfiguration.create({
         data: {
           storeId,
           paymentGatewayRate: 0.029,     // 2.9%
@@ -47,9 +69,37 @@ export async function GET(request: NextRequest) {
 // PUT - Update fee configuration
 export async function PUT(request: NextRequest) {
   try {
+    // Get store ID automatically (same logic as GET method)
+    let store = await prisma.store.findFirst({
+      where: {
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
+      select: { id: true, domain: true },
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    });
+
+    // Fallback to any store
+    if (!store) {
+      store = await prisma.store.findFirst({
+        select: { id: true, domain: true },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      });
+    }
+
+    if (!store) {
+      return NextResponse.json({ error: 'No store connected. Please connect a Shopify store first.' }, { status: 404 });
+    }
+
+    const storeId = store.id;
+
     const body = await request.json();
     const { 
-      storeId, 
       paymentGatewayRate, 
       processingFeePerOrder, 
       defaultCogRate,
@@ -61,10 +111,6 @@ export async function PUT(request: NextRequest) {
       miscCostPerItem,
       usePaymentMethodFees  // NEW: Toggle for payment method-specific fees
     } = body;
-
-    if (!storeId) {
-      return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
-    }
 
     // Validate rates (0-100% for percentages)
     const percentageFields = [
@@ -112,7 +158,7 @@ export async function PUT(request: NextRequest) {
     if (miscCostPerItem !== undefined) updateData.miscCostPerItem = parseFloat(miscCostPerItem);
     if (usePaymentMethodFees !== undefined) updateData.usePaymentMethodFees = Boolean(usePaymentMethodFees);
 
-    const feeConfiguration = await prisma.feeConfiguration.upsert({
+    const feeConfiguration = await (prisma as any).feeConfiguration.upsert({
       where: { storeId },
       create: {
         storeId,
@@ -146,9 +192,37 @@ export async function PUT(request: NextRequest) {
 // POST - Create or reset fee configuration to defaults
 export async function POST(request: NextRequest) {
   try {
+    // Get store ID automatically (same logic as GET method)
+    let store = await prisma.store.findFirst({
+      where: {
+        accessToken: {
+          not: 'pending-setup'
+        }
+      },
+      select: { id: true, domain: true },
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    });
+
+    // Fallback to any store
+    if (!store) {
+      store = await prisma.store.findFirst({
+        select: { id: true, domain: true },
+        orderBy: {
+          updatedAt: 'desc'
+        }
+      });
+    }
+
+    if (!store) {
+      return NextResponse.json({ error: 'No store connected. Please connect a Shopify store first.' }, { status: 404 });
+    }
+
+    const storeId = store.id;
+
     const body = await request.json();
     const { 
-      storeId, 
       paymentGatewayRate = 0.029,
       processingFeePerOrder = 0.30,
       defaultCogRate = 0.30,
@@ -161,11 +235,7 @@ export async function POST(request: NextRequest) {
       usePaymentMethodFees = false
     } = body;
 
-    if (!storeId) {
-      return NextResponse.json({ error: 'Store ID is required' }, { status: 400 });
-    }
-
-    const feeConfiguration = await prisma.feeConfiguration.create({
+    const feeConfiguration = await (prisma as any).feeConfiguration.create({
       data: {
         storeId,
         paymentGatewayRate: parseFloat(paymentGatewayRate),

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { TrendingUp, TrendingDown, Calculator, DollarSign, RefreshCcw, Plus, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, Calculator, DollarSign, RefreshCcw, Plus, Calendar, Truck } from 'lucide-react';
 
 export interface DashboardMetrics {
   totalSales: number;
@@ -29,6 +29,16 @@ export interface DashboardMetrics {
   netRevenue: number;
   netProfit: number;
   totalDiscounts?: number;
+  // Shipping calculation metadata
+  shippingCalculationMethod?: string;
+  shippingCoverage?: number;
+  averageShippingCost?: number;
+  ordersWithShippingData?: number;
+  ordersMissingShippingData?: number;
+  // COG calculation metadata
+  itemsWithCostData?: number;
+  totalLineItems?: number;
+  cogCoveragePercent?: number;
 }
 
 export type BreakdownType = 
@@ -45,11 +55,15 @@ export type BreakdownType =
   | 'totalDiscounts'
   | 'additionalCosts'
   | 'subscriptionCosts'
+  | 'shippingCosts'
+  | 'cogMissingData'
   | 'fees';
 
 interface FinancialBreakdownProps {
   type: BreakdownType;
   metrics: DashboardMetrics;
+  timeframe?: string;
+  onOpenCogMissingData?: () => void;
 }
 
 const formatCurrency = (amount: number) => {
@@ -64,7 +78,42 @@ const formatNumber = (num: number) => {
   return new Intl.NumberFormat('en-US').format(num);
 };
 
-export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
+export function FinancialBreakdown({ type, metrics, timeframe = '30d', onOpenCogMissingData }: FinancialBreakdownProps) {
+  // Debug logging for shipping data
+  if (type === 'shippingCosts') {
+    console.log('🚚 FinancialBreakdown - Shipping Data Debug:', {
+      shippingCalculationMethod: metrics.shippingCalculationMethod,
+      shippingCoverage: metrics.shippingCoverage,
+      averageShippingCost: metrics.averageShippingCost,
+      ordersWithShippingData: metrics.ordersWithShippingData,
+      ordersMissingShippingData: metrics.ordersMissingShippingData,
+      totalOrders: metrics.totalOrders
+    });
+  }
+  
+  // Debug logging for COG data
+  if (type === 'cog') {
+    console.log('📦 FinancialBreakdown - COG Data Debug:', {
+      itemsWithCostData: metrics.itemsWithCostData,
+      totalLineItems: metrics.totalLineItems,
+      cogCoveragePercent: metrics.cogCoveragePercent,
+      totalRevenue: metrics.totalRevenue,
+      cog: metrics.cog,
+      actualCostRate: ((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)
+    });
+  }
+  
+  // Helper function to get timeframe days
+  const getTimeframeDays = (tf: string): number => {
+    switch (tf) {
+      case '7d': return 7;
+      case '30d': return 30;
+      case '90d': return 90;
+      case '1y': return 365;
+      default: return 30;
+    }
+  };
+
   const renderBreakdown = () => {
     switch (type) {
       case 'netRevenue':
@@ -309,8 +358,41 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
               </div>
               
               <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
-                <span>Configured COG Rate</span>
-                <span className="font-medium">{((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}%</span>
+                <span>Total Line Items</span>
+                <span className="font-medium">{formatNumber(metrics.totalLineItems || metrics.totalItems)}</span>
+              </div>
+              
+              {/* COG Data Coverage */}
+              {metrics.itemsWithCostData !== undefined && metrics.totalLineItems !== undefined && (
+                <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                  <span>Cost Data Coverage</span>
+                  <span className="font-medium">
+                    {metrics.cogCoveragePercent?.toFixed(1) || '0'}%
+                    <span className="text-sm text-gray-400 ml-2">
+                      ({metrics.itemsWithCostData} with cost data, {metrics.totalLineItems - metrics.itemsWithCostData} estimated)
+                    </span>
+                  </span>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Actual Cost Rate</span>
+                <span className="font-medium">
+                  {metrics.itemsWithCostData && metrics.itemsWithCostData > 0 
+                    ? `${((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}% (actual)` 
+                    : `${((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}% (estimated)`}
+                </span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Calculation Method</span>
+                <span className="font-medium">
+                  {metrics.itemsWithCostData && metrics.itemsWithCostData > 0 
+                    ? (metrics.cogCoveragePercent && metrics.cogCoveragePercent < 100
+                        ? `📊 Hybrid (${metrics.cogCoveragePercent.toFixed(1)}% Actual + ${(100 - metrics.cogCoveragePercent).toFixed(1)}% Estimated)`
+                        : `✅ 100% Actual Shopify Data`)
+                    : '📊 Estimated Rate'}
+                </span>
               </div>
               
               <div className="border-t border-gray-600 pt-3">
@@ -324,10 +406,38 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
               </div>
               
               <div className="text-xs text-gray-500 bg-gray-800 p-3 rounded-lg">
-                <div className="font-medium mb-1">Calculation:</div>
-                <div>{formatCurrency(metrics.totalRevenue)} × {((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}% = {formatCurrency(metrics.cog)}</div>
+                <div className="font-medium mb-1">How this is calculated:</div>
+                
+                {metrics.itemsWithCostData && metrics.itemsWithCostData > 0 ? (
+                  <div>
+                    <div>• {metrics.itemsWithCostData} line items have actual cost data from Shopify</div>
+                    <div>• {(metrics.totalLineItems || 0) - (metrics.itemsWithCostData || 0)} line items use fallback estimation</div>
+                    <div>• Actual cost rate: {((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}% (vs 30.0% configured)</div>
+                    <div className="mt-2 text-green-400">
+                      ✅ {metrics.cogCoveragePercent?.toFixed(1) || '0'}% accurate cost data from product sync
+                    </div>
+                    {(metrics.totalLineItems || 0) - (metrics.itemsWithCostData || 0) > 0 && onOpenCogMissingData && (
+                      <button
+                        onClick={onOpenCogMissingData}
+                        className="mt-3 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                      >
+                        View {(metrics.totalLineItems || 0) - (metrics.itemsWithCostData || 0)} Items Missing Cost Data
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <div>• Using configured COG rate of 30.0%</div>
+                    <div>• {formatCurrency(metrics.totalRevenue)} × 30.0% = {formatCurrency(metrics.cog)}</div>
+                    <div>• Actual cost rate: {((metrics.cog / metrics.totalRevenue) * 100).toFixed(1)}%</div>
+                    <div className="mt-2 text-blue-400">
+                      ℹ️ Sync product costs for more accurate calculations
+                    </div>
+                  </div>
+                )}
+                
                 <div className="mt-2 text-blue-400">
-                  ℹ️ Using your configured default COG rate. Update individual product costs for more accuracy.
+                  💡 Improve accuracy by syncing product costs in the Products page
                 </div>
               </div>
             </div>
@@ -548,9 +658,7 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
               <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
                 <span>Selected Timeframe</span>
                 <span className="font-medium">
-                  {metrics.totalOrders > 0 ? 
-                    (metrics.subscriptionCosts / (metrics.subscriptionCosts > 0 ? 1 : 1)).toFixed(0) + ' days' : 
-                    'Current period'}
+                  {getTimeframeDays(timeframe)} days
                 </span>
               </div>
               
@@ -636,6 +744,154 @@ export function FinancialBreakdown({ type, metrics }: FinancialBreakdownProps) {
                 </div>
                 <div className="mt-2 text-green-400">
                   ✅ Based on your configured payment gateway and processing fee rates
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+        
+      case 'shippingCosts':
+        return (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-400">
+              Shipping costs are calculated using actual shipping data from your shipping provider, with intelligent fallbacks for missing data.
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Data Source</span>
+                <span className="font-medium text-blue-400">Secondary Shipping Database</span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Total Orders</span>
+                <span className="font-medium">{formatNumber(metrics.totalOrders)}</span>
+              </div>
+              
+              {/* Calculation Method Display */}
+              <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                <span>Calculation Method</span>
+                <span className="font-medium">
+                  {metrics.shippingCalculationMethod === 'actual' && '✅ 100% Actual Data'}
+                  {metrics.shippingCalculationMethod === 'hybrid' && '📊 Hybrid (Actual + Estimated)'}
+                  {metrics.shippingCalculationMethod === 'none' && '❌ No Data Available'}
+                  {metrics.shippingCalculationMethod === 'error' && '⚠️ Error Fetching Data'}
+                </span>
+              </div>
+              
+              {/* Coverage Details */}
+              {metrics.shippingCoverage !== undefined && (
+                <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                  <span>Data Coverage</span>
+                  <span className="font-medium">
+                    {metrics.shippingCoverage.toFixed(1)}%
+                    {metrics.ordersWithShippingData !== undefined && metrics.ordersMissingShippingData !== undefined && (
+                      <span className="text-sm text-gray-400 ml-2">
+                        ({metrics.ordersWithShippingData} with data, {metrics.ordersMissingShippingData} missing)
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              
+              {/* Average Shipping Cost */}
+              {metrics.averageShippingCost !== undefined && metrics.averageShippingCost > 0 && (
+                <div className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                  <span>Average Cost Per Order</span>
+                  <span className="font-medium">{formatCurrency(metrics.averageShippingCost)}</span>
+                </div>
+              )}
+              
+              <div className="border-t border-gray-600 pt-3">
+                <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-600/30">
+                  <div className="flex items-center gap-2">
+                    <Truck className="w-4 h-4 text-red-400" />
+                    <span className="text-red-400 font-medium">Total Shipping Costs</span>
+                  </div>
+                  <span className="font-bold text-red-400">{formatCurrency(metrics.shippingCosts)}</span>
+                </div>
+              </div>
+              
+              <div className="text-xs text-gray-500 bg-gray-800 p-3 rounded-lg">
+                <div className="font-medium mb-1">How this works:</div>
+                
+                {metrics.shippingCalculationMethod === 'actual' && (
+                  <div>
+                    <div>• 100% of orders have actual shipping cost data</div>
+                    <div>• All costs pulled directly from shipping provider</div>
+                    <div className="mt-2 text-green-400">
+                      ✅ Completely accurate shipping costs
+                    </div>
+                  </div>
+                )}
+                
+                {metrics.shippingCalculationMethod === 'hybrid' && (
+                  <div>
+                    <div>• {metrics.ordersWithShippingData || 0} orders have actual shipping data</div>
+                    <div>• {metrics.ordersMissingShippingData || 0} orders estimated using ${metrics.averageShippingCost?.toFixed(2) || '0.00'} average</div>
+                    <div>• Average calculated from {metrics.ordersWithShippingData || 0} orders with real data</div>
+                    <div className="mt-2 text-blue-400">
+                      📊 Very accurate with smart fallback for missing data
+                    </div>
+                  </div>
+                )}
+                
+                {metrics.shippingCalculationMethod === 'none' && (
+                  <div>
+                    <div>• No shipping cost data available</div>
+                    <div>• Showing $0 to avoid false calculations</div>
+                    <div className="mt-2 text-yellow-400">
+                      ⚠️ Configure shipping database for accurate costs
+                    </div>
+                  </div>
+                )}
+                
+                {metrics.shippingCalculationMethod === 'error' && (
+                  <div>
+                    <div>• Error occurred while fetching shipping data</div>
+                    <div>• Showing $0 to avoid false calculations</div>
+                    <div className="mt-2 text-red-400">
+                      ❌ Check shipping database connection
+                    </div>
+                  </div>
+                )}
+                
+                <div className="mt-2 text-blue-400">
+                  💡 Data source: Separate shipping database with order fulfillment details
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+        
+      case 'cogMissingData':
+        return (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-400">
+              These products and variants are missing cost data and are using estimated rates instead of actual costs.
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-yellow-900/20 rounded-lg border border-yellow-600/30">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-yellow-400" />
+                  <span className="text-yellow-400 font-medium">Items Missing Cost Data</span>
+                </div>
+                <span className="font-bold text-yellow-400">
+                  {(metrics.totalLineItems || 0) - (metrics.itemsWithCostData || 0)} items
+                </span>
+              </div>
+              
+              <div className="text-xs text-gray-500 bg-gray-800 p-3 rounded-lg">
+                <div className="font-medium mb-1">What this means:</div>
+                <div>• These items are using the configured 30% COG rate</div>
+                <div>• Actual Shopify cost data is not available for these variants</div>
+                <div>• This reduces calculation accuracy for these specific items</div>
+                <div className="mt-2 text-blue-400">
+                  💡 To fix this: Go to Products page → Sync individual products → Update cost data
+                </div>
+                <div className="mt-2 text-yellow-400">
+                  ⚠️ Note: This is a simplified view. For detailed product-level data, use the Products page
                 </div>
               </div>
             </div>

@@ -152,60 +152,121 @@ export async function getBulkShippingCosts(orderNames: string[], fulfillmentFilt
   try {
     if (orderNames.length === 0) return {}
     
+    console.log(`🚚 Shipping DB - Processing ${orderNames.length} orders for ACTUAL carrier costs...`);
+    
     // Remove # prefix from all order names for querying
     const cleanOrderNames = orderNames.map(name => name.replace('#', ''))
     
-    const { data, error } = await shippingDb
-      .from('orders')
-      .select('order_number, order_status, raw_order_data')
-      .in('order_number', cleanOrderNames)
-    
-    if (error) {
-      console.error('Error fetching bulk shipping costs:', error)
-      return {}
-    }
-    
-    // Group by original order name (with #)
+    // ✅ FIXED: Get ACTUAL carrier costs from shipments table, not shipping revenue from orders
+    const BATCH_SIZE = 500;
     const grouped: Record<string, ShippingCost[]> = {}
     
-    data?.forEach((order: any) => {
-      const originalOrderName = `#${order.order_number}`
-      const shippingAmount = order.raw_order_data?.shippingAmount || 0
-      const shippingStatus = order.order_status
+    // Process orders in batches
+    for (let i = 0; i < cleanOrderNames.length; i += BATCH_SIZE) {
+      const batch = cleanOrderNames.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(cleanOrderNames.length / BATCH_SIZE);
       
-      // Apply fulfillment-based filtering
-      let includeShippingCost = true
+      console.log(`🚚 Shipping DB - Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders) - looking for ACTUAL carrier costs`);
       
-      if (fulfillmentFilter === 'unfulfilled') {
-        // For unfulfilled filter, exclude shipping costs (labels created but not shipped)
-        includeShippingCost = false
-      } else if (fulfillmentFilter === 'fulfilled' || fulfillmentFilter === 'all') {
-        // For both fulfilled and 'all' filters, only include costs for actually shipped orders
-        includeShippingCost = shippingStatus === 'shipped' || shippingStatus === 'delivered'
-      }
-      
-      if (includeShippingCost && (shippingAmount > 0 || orderNames.includes(originalOrderName))) {
-        // Create shipping cost entry
-        const shippingCost: ShippingCost = {
-          id: `${order.order_number}_shipping`,
-          order_id: order.order_number,
-          shopify_order_name: originalOrderName,
-          shipping_cost: parseFloat(shippingAmount) || 0,
-          carrier: order.raw_order_data?.requestedShippingService || 'Unknown',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+      try {
+        // ✅ NEW: Query shipments table for actual carrier costs, not orders table for revenue
+        const { data: shipmentsData, error: shipmentsError } = await shippingDb
+          .from('shipments')
+          .select('*')
+          .in('order_number', batch)
+          .not('shipment_cost', 'is', null)
+          .gt('shipment_cost', 0)
+        
+        if (shipmentsError) {
+          console.error(`🚚 Shipping DB - Error getting shipments in batch ${batchNumber}:`, shipmentsError)
         }
         
-        if (!grouped[originalOrderName]) {
-          grouped[originalOrderName] = []
+        // Process shipments data (actual carrier costs)
+        shipmentsData?.forEach((shipment: any) => {
+          const originalOrderName = `#${shipment.order_number}`
+          const actualCarrierCost = parseFloat(shipment.shipment_cost) || 0
+          const insuranceCost = parseFloat(shipment.insurance_cost) || 0
+          const fulfillmentFee = parseFloat(shipment.fulfillment_fee) || 0
+          const totalShippingCost = actualCarrierCost + insuranceCost + fulfillmentFee
+          
+          // Apply fulfillment filtering if needed
+          let includeShippingCost = true
+          if (fulfillmentFilter === 'unfulfilled') {
+            includeShippingCost = false // Unfulfilled orders shouldn't have shipping costs
+          }
+          
+          if (includeShippingCost && totalShippingCost > 0) {
+            const shippingCost: ShippingCost = {
+              id: `${shipment.order_number}_actual_cost`,
+              order_id: shipment.order_number,
+              shopify_order_name: originalOrderName,
+              shipping_cost: totalShippingCost,
+              carrier: shipment.carrier_code || 'Unknown',
+              created_at: shipment.created_at || new Date().toISOString(),
+              updated_at: shipment.updated_at || new Date().toISOString()
+            }
+            
+            if (!grouped[originalOrderName]) {
+              grouped[originalOrderName] = []
+            }
+            grouped[originalOrderName].push(shippingCost)
+          }
+        })
+        
+        // ✅ FALLBACK: Check label_ledger for additional cost data
+        try {
+          const { data: labelData, error: labelError } = await shippingDb
+            .from('label_ledger')
+            .select('*')
+            .in('order_number', batch)
+            .not('cost', 'is', null)
+            .gt('cost', 0)
+          
+          if (!labelError && labelData) {
+            labelData.forEach((label: any) => {
+              const originalOrderName = `#${label.order_number}`
+              
+              // Only add if we don't already have cost data from shipments
+              if (!grouped[originalOrderName]) {
+                const labelCost = parseFloat(label.cost) || parseFloat(label.postage_cost) || 0
+                
+                if (labelCost > 0) {
+                  const shippingCost: ShippingCost = {
+                    id: `${label.order_number}_label_cost`,
+                    order_id: label.order_number,
+                    shopify_order_name: originalOrderName,
+                    shipping_cost: labelCost,
+                    carrier: label.carrier || 'Unknown',
+                    created_at: label.created_at || new Date().toISOString(),
+                    updated_at: label.updated_at || new Date().toISOString()
+                  }
+                  
+                  grouped[originalOrderName] = [shippingCost]
+                }
+              }
+            })
+          }
+        } catch (labelError) {
+          console.log(`🚚 Shipping DB - No label_ledger data available in batch ${batchNumber}`)
         }
-        grouped[originalOrderName].push(shippingCost)
+        
+        // Small delay between batches
+        if (i + BATCH_SIZE < cleanOrderNames.length) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        
+      } catch (batchError) {
+        console.error(`🚚 Shipping DB - Batch ${batchNumber} failed:`, batchError)
+        continue
       }
-    })
+    }
     
+    console.log(`🚚 Shipping DB - Completed! Found ACTUAL carrier costs for ${Object.keys(grouped).length} orders`);
     return grouped
+    
   } catch (error) {
-    console.error('Error in getBulkShippingCosts:', error)
+    console.error('🚚 Shipping DB - Fatal error in getBulkShippingCosts:', error)
     return {}
   }
 }

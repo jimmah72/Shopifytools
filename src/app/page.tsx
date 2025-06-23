@@ -98,6 +98,16 @@ interface DashboardMetrics {
   netRevenue: number;
   netProfit: number;  // NEW
   totalDiscounts: number;
+  // NEW: Shipping calculation metadata
+  shippingCalculationMethod?: string;
+  shippingCoverage?: number;
+  averageShippingCost?: number;
+  ordersWithShippingData?: number;
+  ordersMissingShippingData?: number;
+  // COG calculation metadata
+  itemsWithCostData?: number;
+  totalLineItems?: number;
+  cogCoveragePercent?: number;
   recentOrders: Array<{
     id: string;
     orderNumber: string;
@@ -160,6 +170,8 @@ export default function DashboardPage() {
       case 'totalDiscounts': return 'Total Discounts Breakdown';
       case 'additionalCosts': return 'Additional Costs Breakdown';  // NEW
       case 'subscriptionCosts': return 'Subscription Costs Breakdown';  // NEW
+      case 'shippingCosts': return 'Shipping Costs Breakdown';  // NEW
+      case 'cogMissingData': return 'Missing Cost Data';  // NEW
       default: return 'Financial Breakdown';
     }
   };
@@ -483,6 +495,8 @@ export default function DashboardPage() {
             icon={Truck}
             loading={loading}
             variant="expense"
+            clickable={true}
+            onClick={() => openModal('shippingCosts')}
           />
         </div>
       </div>
@@ -544,6 +558,8 @@ export default function DashboardPage() {
           <FinancialBreakdown
             type={modalBreakdownType}
             metrics={metrics as ModalMetrics}
+            timeframe={timeframe}
+            onOpenCogMissingData={() => openModal('cogMissingData')}
           />
         )}
       </Modal>

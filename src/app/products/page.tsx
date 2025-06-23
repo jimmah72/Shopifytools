@@ -226,7 +226,8 @@ export default function ProductsPage() {
       costData: costDataFilter 
     },
     forceSync: boolean = false,
-    showLoading: boolean = true // NEW: Control whether to show loading spinner
+    showLoading: boolean = true, // NEW: Control whether to show loading spinner
+    forceHandlingFeesRecalc: boolean = false // NEW: Force handling fees recalculation parameter
   ) => {
     // ✅ FIX: Simple request deduplication without state dependency
     const requestKey = JSON.stringify({ page, search, sort, filters, forceSync });
@@ -270,7 +271,8 @@ export default function ProductsPage() {
         ...(filters.status !== 'all' && { statusFilter: filters.status }),
         ...(filters.costSource !== 'all' && { costSourceFilter: filters.costSource }),
         ...(filters.costData !== 'all' && { costDataFilter: filters.costData }),
-        ...(forceSync && { forceSync: 'true' })
+        ...(forceSync && { forceSync: 'true' }),
+        ...(forceHandlingFeesRecalc && { forceHandlingFeesRecalc: 'true' })
       });
       
       console.log(`🌐 Making API request [${callId}]: /api/products?${params.toString()}`);
@@ -342,13 +344,21 @@ export default function ProductsPage() {
     
     if (hasUserInteracted || searchParams.toString().length === 0) {
       console.log(`🔄 useEffect [${effectId}] - Calling fetchProducts...`);
+      
+      // ✅ NEW: Check for forceHandlingFeesRecalc parameter in URL
+      const shouldForceHandlingFeesRecalc = searchParams.get('forceHandlingFeesRecalc') === 'true';
+      if (shouldForceHandlingFeesRecalc) {
+        console.log('🔧 URL parameter detected: forceHandlingFeesRecalc=true');
+      }
+      
       fetchProducts(
         currentPage, 
         debouncedSearchTerm,
         { field: sortField, direction: sortDirection },
         { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
         false, // forceSync = false for normal page loads
-        true // showLoading = true (normal page loads should show loading)
+        true, // showLoading = true (normal page loads should show loading)
+        shouldForceHandlingFeesRecalc // NEW: Pass the URL parameter
       );
     } else {
       console.log(`🔄 useEffect [${effectId}] - SKIPPED fetchProducts (conditions not met)`);
@@ -393,7 +403,8 @@ export default function ProductsPage() {
         { field: sortField, direction: sortDirection },
         { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
         true, // forceSync = true
-        false // showLoading = false (manual sync should not hide existing data)
+        false, // showLoading = false (manual sync should not hide existing data)
+        false // forceHandlingFeesRecalc = false (manual sync doesn't need this)
       );
       console.log('✅ Manual sync completed for current page');
     } catch (error) {
@@ -797,7 +808,8 @@ export default function ProductsPage() {
             { field: sortField, direction: sortDirection },
             { status: statusFilter, costSource: costSourceFilter, costData: costDataFilter },
             true, // forceSync = true after global sync completion
-            false // showLoading = false (background sync - don't show loading spinner)
+            false, // showLoading = false (background sync - don't show loading spinner)
+            false // forceHandlingFeesRecalc = false (background sync doesn't need this)
           ).then(() => {
             console.log('ProductsPage - Product data refreshed after sync completion');
           });

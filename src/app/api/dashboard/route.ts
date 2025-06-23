@@ -32,6 +32,16 @@ interface DashboardMetrics {
   netRevenue: number;
   netProfit: number;  // NEW: Net profit after all costs
   totalDiscounts: number;
+  // NEW: Shipping calculation metadata
+  shippingCalculationMethod?: string;
+  shippingCoverage?: number;
+  averageShippingCost?: number;
+  ordersWithShippingData?: number;
+  ordersMissingShippingData?: number;
+  // COG calculation metadata
+  itemsWithCostData?: number;
+  totalLineItems?: number;
+  cogCoveragePercent?: number;
   recentOrders: Array<{
     id: string;
     orderNumber: string;
@@ -54,12 +64,11 @@ export async function GET(request: NextRequest) {
     const fulfillmentStatus = searchParams.get('fulfillmentStatus') || 'all'
     
     // ✅ FIX: Use smart store selection (prioritize active stores with real tokens)
-    console.log('Dashboard API - Finding active store with real connection')
+    console.log('Dashboard API - Finding store with real connection')
     
-    // First, try to find an active store with a real access token (not placeholder)
+    // First, try to find a store with a real access token (not placeholder)
     let store = await prisma.store.findFirst({
       where: {
-        isActive: true,
         accessToken: {
           not: 'pending-setup'
         }
@@ -70,23 +79,9 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // If no active store with real token, fall back to any active store
-    if (!store) {
-      console.log('Dashboard API - No active store with real token found, trying any active store')
-      store = await prisma.store.findFirst({
-        where: {
-          isActive: true
-        },
-        select: { id: true, domain: true, accessToken: true },
-        orderBy: {
-          updatedAt: 'desc'
-        }
-      })
-    }
-
     // Last resort: any store at all
     if (!store) {
-      console.log('Dashboard API - No active store found, trying any store')
+      console.log('Dashboard API - No store with real token found, trying any store')
       store = await prisma.store.findFirst({
         select: { id: true, domain: true, accessToken: true },
         orderBy: {
@@ -177,18 +172,18 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Get active additional costs and subscription fees
+    // Get additional costs and subscription fees
     const [additionalCostsData, subscriptionFeesData] = await Promise.all([
       (prisma as any).additionalCost.findMany({
         where: { 
           storeId: store.id,
-          isActive: true 
+          isActive: true
         }
       }),
       (prisma as any).subscriptionFee.findMany({
         where: { 
           storeId: store.id,
-          isActive: true 
+          isActive: true
         }
       })
     ]);
@@ -264,6 +259,10 @@ export async function GET(request: NextRequest) {
     console.log('Dashboard API - Fetching shipping costs from second database...');
     let actualShippingCosts = 0;
     let shippingCostsCoverage = 0;
+    let averageShippingCost = 0;
+    let shippingCalculationMethod = 'none';
+    let ordersWithShippingData = 0;
+    let ordersMissingShippingData = 0;
     
     try {
       // Get order names for the filtered period
@@ -278,21 +277,51 @@ export async function GET(request: NextRequest) {
         // Fetch shipping costs in bulk from second database (filtered by fulfillment status)
         const shippingCostsData = await getBulkShippingCosts(orderNames, fulfillmentStatus);
         
-        // Calculate total shipping costs
+        // Calculate actual shipping costs from available data
+        const shippingCostsArray: number[] = [];
         Object.values(shippingCostsData).forEach(shippingCosts => {
-          actualShippingCosts += calculateTotalShippingCost(shippingCosts);
+          const orderShippingCost = calculateTotalShippingCost(shippingCosts);
+          if (orderShippingCost > 0) {
+            shippingCostsArray.push(orderShippingCost);
+          }
+          actualShippingCosts += orderShippingCost;
         });
         
-        // Calculate coverage percentage
-        const ordersWithShippingData = Object.keys(shippingCostsData).length;
+        // Calculate coverage and average
+        ordersWithShippingData = Object.keys(shippingCostsData).length;
+        ordersMissingShippingData = orderNames.length - ordersWithShippingData;
         shippingCostsCoverage = orderNames.length > 0 ? (ordersWithShippingData / orderNames.length) * 100 : 0;
         
-        console.log(`Dashboard API - Shipping costs: $${actualShippingCosts.toFixed(2)} (${shippingCostsCoverage.toFixed(1)}% coverage)`);
+        // Calculate average shipping cost from available data for fallback
+        if (shippingCostsArray.length > 0) {
+          averageShippingCost = shippingCostsArray.reduce((sum, cost) => sum + cost, 0) / shippingCostsArray.length;
+          
+          // Apply average to orders missing shipping data (for display purposes only)
+          if (ordersMissingShippingData > 0) {
+            const estimatedMissingCosts = ordersMissingShippingData * averageShippingCost;
+            actualShippingCosts += estimatedMissingCosts;
+            shippingCalculationMethod = 'hybrid';
+            
+            console.log(`Dashboard API - Shipping cost calculation:`);
+            console.log(`   📦 Orders with actual data: ${ordersWithShippingData} ($${(actualShippingCosts - estimatedMissingCosts).toFixed(2)})`);
+            console.log(`   📊 Orders missing data: ${ordersMissingShippingData}`);
+            console.log(`   🧮 Average cost per order: $${averageShippingCost.toFixed(2)}`);
+            console.log(`   📈 Estimated missing costs: $${estimatedMissingCosts.toFixed(2)}`);
+            console.log(`   💰 Total shipping costs: $${actualShippingCosts.toFixed(2)} (${shippingCostsCoverage.toFixed(1)}% actual data + ${((ordersMissingShippingData / orderNames.length) * 100).toFixed(1)}% estimated)`);
+          } else {
+            shippingCalculationMethod = 'actual';
+            console.log(`Dashboard API - Shipping costs: $${actualShippingCosts.toFixed(2)} (100% actual data from 2nd DB)`);
+          }
+        } else {
+          shippingCalculationMethod = 'none';
+          console.log(`Dashboard API - No shipping cost data available for timeframe`);
+        }
       }
     } catch (shippingError) {
       console.warn('Dashboard API - Could not fetch shipping costs from second database:', shippingError);
       actualShippingCosts = 0;
       shippingCostsCoverage = 0;
+      shippingCalculationMethod = 'error';
     }
 
     // ✅ FIXED: Calculate ACTUAL COG from our synced product data using efficient join
@@ -336,6 +365,7 @@ export async function GET(request: NextRequest) {
     const actualCOG = parseFloat(result.actual_cog || '0');
     const totalLineItems = parseInt(result.total_line_items || '0');
     const itemsWithCosts = parseInt(result.items_with_costs || '0');
+    const cogCoveragePercent = totalLineItems > 0 ? (itemsWithCosts / totalLineItems) * 100 : 0;
     
     const estimatedCOG = totalRevenue * feeConfig.defaultCogRate; // Keep as fallback
     
@@ -348,7 +378,7 @@ export async function GET(request: NextRequest) {
       finalCOG: finalCOG.toFixed(2),
       itemsWithCosts: itemsWithCosts,
       totalLineItems: totalLineItems,
-      coveragePercent: totalLineItems > 0 ? ((itemsWithCosts / totalLineItems) * 100).toFixed(1) + '%' : '0%',
+      coveragePercent: cogCoveragePercent.toFixed(1) + '%',
       usingActual: actualCOG > 0,
       dataSource: actualCOG > 0 ? 'local_database_actual_costs' : 'estimated_cog_rate'
     });
@@ -429,7 +459,12 @@ export async function GET(request: NextRequest) {
           console.log(`   📦 ${actualCOG > 0 ? 'Actual' : 'Estimated'} COG: $${finalCOG.toFixed(2)} ${actualCOG > 0 ? '(from local database)' : `(${(feeConfig.defaultCogRate * 100).toFixed(1)}% estimate)`}`)
     console.log(`   🏗️  Additional Costs: $${additionalCosts.toFixed(2)}`)
     console.log(`   💼 Subscription Costs: $${subscriptionCosts.toFixed(2)}`)
-    console.log(`   🚚 Shipping Costs: $${actualShippingCosts.toFixed(2)} (${shippingCostsCoverage.toFixed(1)}% coverage from 2nd DB)`)
+    console.log(`   🚚 Shipping Costs: $${actualShippingCosts.toFixed(2)} (${
+      shippingCalculationMethod === 'actual' ? '100% actual data from 2nd DB' :
+      shippingCalculationMethod === 'hybrid' ? `${shippingCostsCoverage.toFixed(1)}% actual + ${(100 - shippingCostsCoverage).toFixed(1)}% estimated from avg` :
+      shippingCalculationMethod === 'none' ? 'no data available' :
+      'error fetching data'
+    })`)
     console.log(`   📋 Fulfillment Filter: ${fulfillmentStatus}`)
     console.log(`   🎟️  Total Discounts (not deducted): $${totalDiscounts.toFixed(2)}`)
     console.log('========================================================')
@@ -478,7 +513,17 @@ export async function GET(request: NextRequest) {
       totalDiscounts,  // NEW: Include discounts in response
       recentOrders,
       dataSource: 'local_database',
-      lastSyncTime: syncStatus?.lastSyncAt?.toISOString()
+      lastSyncTime: syncStatus?.lastSyncAt?.toISOString(),
+      // Shipping calculation metadata
+      shippingCalculationMethod,
+      shippingCoverage: shippingCostsCoverage,
+      averageShippingCost,
+      ordersWithShippingData,
+      ordersMissingShippingData,
+      // COG calculation metadata
+      itemsWithCostData: itemsWithCosts,
+      totalLineItems,
+      cogCoveragePercent
     }
 
     console.log('Dashboard API - Local metrics calculated:', {

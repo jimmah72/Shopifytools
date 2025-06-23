@@ -258,11 +258,11 @@ async function saveProductAndVariantDataToDatabase(storeId: string, shopifyProdu
 // Function to calculate handling fees from additional costs (used in page-level sync)
 async function calculateHandlingFeesFromAdditionalCosts(storeId: string, productPrice: number): Promise<number> {
   try {
-    // Fetch all active additional costs for the store
+    // Fetch all ACTIVE additional costs for the store
     const additionalCosts = await (prisma as any).additionalCost.findMany({
       where: { 
         storeId: storeId,
-        isActive: true 
+        isActive: true
       }
     });
 
@@ -308,10 +308,9 @@ export async function GET(request: NextRequest) {
     // ✅ FIX: Use smart store selection (prioritize active stores with real tokens)
     console.log('Products API - Finding active store with real connection')
     
-    // First, try to find an active store with a real access token (not placeholder)
+    // First, try to find a store with a real access token (not placeholder)
     let store = await prisma.store.findFirst({
       where: {
-        isActive: true,
         accessToken: {
           not: 'pending-setup'
         }
@@ -321,20 +320,6 @@ export async function GET(request: NextRequest) {
         updatedAt: 'desc' // Get the most recently updated store
       }
     })
-
-    // If no active store with real token, fall back to any active store
-    if (!store) {
-      console.log('Products API - No active store with real token found, trying any active store')
-      store = await prisma.store.findFirst({
-        where: {
-          isActive: true
-        },
-        select: { id: true, domain: true, accessToken: true },
-        orderBy: {
-          updatedAt: 'desc'
-        }
-      })
-    }
 
     // Last resort: any store at all
     if (!store) {
@@ -374,6 +359,7 @@ export async function GET(request: NextRequest) {
     const fetchCosts = searchParams.get('fetchCosts') === 'true'
     const fetchVariantCosts = searchParams.get('fetchVariantCosts') === 'true'
     const forceSync = searchParams.get('forceSync') === 'true' // ✅ NEW: Force sync parameter
+    const forceHandlingFeesRecalc = searchParams.get('forceHandlingFeesRecalc') === 'true' // ✅ NEW: Force handling fees recalculation
     
     // Sort and filter parameters
     const sortField = searchParams.get('sortField') || 'title'
@@ -389,12 +375,16 @@ export async function GET(request: NextRequest) {
       fetchCosts, 
       fetchVariantCosts,
       forceSync, // ✅ NEW: Log force sync parameter
+      forceHandlingFeesRecalc, // ✅ NEW: Log force handling fees recalc parameter
       sortField, 
       sortDirection, 
       statusFilter, 
       costSourceFilter, 
       costDataFilter 
     })
+    
+    // ✅ DEBUG: Explicitly log the force handling fees recalc parameter
+    console.log(`🔧 DEBUG: forceHandlingFeesRecalc = ${forceHandlingFeesRecalc}`)
     
     // ✅ PERFORMANCE: Load from database first for immediate page loading
     console.log(`📊 Request [${requestId}] - Loading products from database first for immediate response`);
@@ -442,73 +432,42 @@ export async function GET(request: NextRequest) {
     console.log(`📊 Request [${requestId}] - Found ${shopifyProductSyncStatus.length} ShopifyProduct records in database`);
 
     // ✅ SMART SYNC: Only fetch from Shopify if we need fresh data or if forced
-    let shouldFetchFromShopify = forceSync;
+    let shouldFetchFromShopify = forceSync; // Only force sync if explicitly requested
     
-    if (!shouldFetchFromShopify && fetchCosts) {
-      // Check if we have enough fresh data to skip Shopify API call
+    // ✅ CRITICAL FIX: Never block page loading with full sync
+    // For normal page requests, always use cached data for immediate response
+    if (!forceSync) {
+      console.log(`📊 Request [${requestId}] - Normal page load - using cached data for immediate response`);
+      shouldFetchFromShopify = false;
+    }
+    
+    if (forceSync && fetchCosts) {
+      // Only for explicit force sync requests, check staleness
       const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
       const staleProducts = shopifyProductSyncStatus.filter((p: any) => 
         !p.lastSyncedAt || new Date(p.lastSyncedAt) < eightHoursAgo
       );
       
-      shouldFetchFromShopify = staleProducts.length > 0;
-      console.log(`📊 Request [${requestId}] - Stale products needing sync: ${staleProducts.length}`);
+      console.log(`📊 Request [${requestId}] - Force sync requested - ${staleProducts.length} stale products found`);
     }
 
     let shopifyProducts: any[] = [];
     
-    if (shouldFetchFromShopify) {
-      // ✅ FIX: For force sync (page-level), don't fetch ALL products, use cached data and sync later
-      if (forceSync) {
-        console.log(`📊 Request [${requestId}] - Force sync requested - will sync current page products only`);
-        // Use cached database data, but transform it to Shopify API format for consistency
-        shopifyProducts = shopifyProductSyncStatus.map((p: any) => ({
-          id: p.id,
-          title: p.title,
-          handle: p.handle,
-          status: p.status,
-          images: p.images || [],
-          variants: p.variants || []
-        }));
-      } else {
-        // Full sync - fetch ALL products from Shopify using efficient pagination
-        console.log(`📊 Request [${requestId}] - Fetching fresh data from Shopify API`);
-        shopifyProducts = await getAllProducts(formattedDomain, store.accessToken);
-        console.log(`📊 Request [${requestId}] - Total Shopify products fetched: ${shopifyProducts.length}`);
-        
-        // ✅ COMPLETE FIX: Save product and variant data to database when we have fresh data
-        await saveProductAndVariantDataToDatabase(store.id, shopifyProducts);
-        
-        // ✅ REFRESH: Update our database maps with the fresh data we just saved
-        const refreshedShopifyProducts = await (prisma as any).shopifyProduct.findMany({
-          where: { storeId: store.id },
-          select: { 
-            id: true, 
-            title: true,
-            handle: true,
-            status: true,
-            images: true,
-            variants: {
-              select: {
-                id: true,
-                price: true,
-                sku: true,
-                inventoryQuantity: true,
-                costPerItem: true
-              }
-            },
-            lastSyncedAt: true 
-          }
-        });
-        
-        // Update the shopifyProductsMap with fresh data
-        shopifyProductsMap.clear();
-        refreshedShopifyProducts.forEach((p: any) => shopifyProductsMap.set(p.id, p));
-        console.log(`📊 Request [${requestId}] - Refreshed database cache with ${refreshedShopifyProducts.length} products and their variants`);
-      }
+    if (shouldFetchFromShopify && forceSync) {
+      // ✅ ONLY for explicit force sync: sync current page products only (not all 510!)
+      console.log(`📊 Request [${requestId}] - Force sync requested - will sync current page products only, not blocking response`);
+      // Use cached database data for immediate response
+      shopifyProducts = shopifyProductSyncStatus.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        status: p.status,
+        images: p.images || [],
+        variants: p.variants || []
+      }));
     } else {
-      console.log(`📊 Request [${requestId}] - Using cached database data (no fresh sync needed)`);
-      // Use cached database data, but transform it to Shopify API format for consistency
+      // ✅ ALWAYS for normal page loading: Use cached data immediately
+      console.log(`📊 Request [${requestId}] - Using cached database data for immediate page response`);
       shopifyProducts = shopifyProductSyncStatus.map((p: any) => ({
         id: p.id,
         title: p.title,
@@ -767,9 +726,9 @@ export async function GET(request: NextRequest) {
     const endIndex = startIndex + limit;
     const paginatedProducts = filteredAndTransformedProducts.slice(startIndex, endIndex);
 
-    // ✅ NEW: Pre-fetch fresh variant costs ONLY for paginated products (to avoid rate limiting)
+    // ✅ PERFORMANCE OPTIMIZATION: Declare variables and only do sync operations for forceSync requests
     let freshVariantCostsForPageProducts: Record<string, Record<string, number>> = {};
-    const pageProductsNeedingFreshCosts = paginatedProducts.filter((product: any) => {
+    const pageProductsNeedingFreshCosts = forceSync ? paginatedProducts.filter((product: any) => {
       const existingProduct = existingProductsMap.get(product.id);
       const cachedProduct = shopifyProductsMap.get(product.id);
       
@@ -781,10 +740,11 @@ export async function GET(request: NextRequest) {
         return !hasGoodSavedCost && !hasGoodVariantCost && !hasGoodDisplayCost;
       }
       return false;
-    }).map((product: any) => product.id);
+    }).map((product: any) => product.id) : [];
 
-    if (pageProductsNeedingFreshCosts.length > 0) {
-      console.log(`💰 Fetching fresh variant costs for ${pageProductsNeedingFreshCosts.length} SHOPIFY products on current page (avoiding rate limits)`);
+    // Only do cost fetching and sync operations if explicitly requested (forceSync=true)
+    if (forceSync && pageProductsNeedingFreshCosts.length > 0) {
+      console.log(`💰 Force sync requested - fetching fresh variant costs for ${pageProductsNeedingFreshCosts.length} SHOPIFY products on current page`);
       try {
         freshVariantCostsForPageProducts = await getProductsVariantCostData(formattedDomain, store.accessToken, pageProductsNeedingFreshCosts);
         
@@ -810,6 +770,8 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error('❌ Error fetching variant costs for current page:', error);
       }
+    } else if (!forceSync) {
+      console.log(`📊 Request [${requestId}] - Normal page load - skipping cost sync operations for fast response`);
     }
 
     // ✅ PERFORMANCE: Use cached handling fees from database (calculated during sync)
@@ -840,75 +802,70 @@ export async function GET(request: NextRequest) {
       returnedProducts: paginatedProducts.length
     });
 
-    // ✅ SMART COST SYNC: Only fetch cost data for products that need it
+    // ✅ CRITICAL OPTIMIZATION: Only do sync operations if explicitly requested (forceSync=true)
+    // For normal page loads, skip all sync logic for immediate response
     let productsNeedingSync: string[] = []; // ✅ Declare in proper scope
     
-    if (fetchCosts && paginatedProducts.length > 0) {
+    if (forceSync && fetchCosts && paginatedProducts.length > 0) {
+      console.log(`📊 Request [${requestId}] - Force sync mode - processing cost data for current page`);
       const pageProductIds = paginatedProducts.map(product => product.id);
       
-      // Determine which products need cost data refresh
-      productsNeedingSync = pageProductIds;
-      
-      if (!forceSync) {
-        // Filter to only products that haven't been synced recently
-        const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
-        productsNeedingSync = pageProductIds.filter(productId => {
-          const shopifyProduct = shopifyProductsMap.get(productId);
-          return !shopifyProduct?.lastSyncedAt || new Date(shopifyProduct.lastSyncedAt) < eightHoursAgo;
-        });
-      }
+      // Filter to only products that haven't been synced recently
+      const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+      productsNeedingSync = pageProductIds.filter(productId => {
+        const shopifyProduct = shopifyProductsMap.get(productId);
+        return !shopifyProduct?.lastSyncedAt || new Date(shopifyProduct.lastSyncedAt) < eightHoursAgo;
+      });
 
       if (productsNeedingSync.length > 0) {
-        console.log(`Products API - Syncing cost data for ${productsNeedingSync.length} products (${pageProductIds.length - productsNeedingSync.length} already fresh)`);
+        console.log(`Products API - Force sync: updating cost data for ${productsNeedingSync.length} products (${pageProductIds.length - productsNeedingSync.length} already fresh)`);
         
         const pageCostData = await getProductsCostData(store.domain, store.accessToken, productsNeedingSync);
         
         // Save cost data to database
         await saveCostDataToDatabase(store.id, pageCostData, productsNeedingSync);
         
-        // ✅ FIX: For page sync, also update main Product table with variant costs AND handling fees
-        if (forceSync) {
-          console.log(`Products API - Updating main Product table for ${productsNeedingSync.length} products with variant costs and handling fees`);
-          for (const productId of productsNeedingSync) {
-            const shopifyProduct = shopifyProductsMap.get(productId);
-            if (shopifyProduct?.variants && shopifyProduct.variants.length > 0) {
-              const firstVariant = shopifyProduct.variants[0];
-              const variantCost = firstVariant?.costPerItem || pageCostData[productId];
-              const variantPrice = firstVariant?.price || 0;
-              
-              // ✅ NEW: Calculate handling fees for this product during page sync
-              const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, variantPrice);
-              
-              if (variantCost && variantCost > 0) {
-                try {
-                  await prisma.product.upsert({
-                    where: { shopifyId: productId },
-                    update: { 
-                      costOfGoodsSold: variantCost,
-                      handlingFees: calculatedHandlingFees, // ✅ NEW: Update handling fees
-                      costSource: 'SHOPIFY',
-                      price: variantPrice,
-                      sellingPrice: variantPrice,
-                      title: shopifyProduct.title
-                    },
-                    create: {
-                      shopifyId: productId,
-                      storeId: store.id,
-                      title: shopifyProduct.title || `Product ${productId}`,
-                      description: '',
-                      price: variantPrice,
-                      sellingPrice: variantPrice,
-                      cost: variantCost,
-                      costOfGoodsSold: variantCost,
-                      handlingFees: calculatedHandlingFees, // ✅ NEW: Set handling fees
-                      costSource: 'SHOPIFY',
-                      sku: firstVariant?.sku || ''
-                    }
-                  });
-                  console.log(`Products API - Updated main Product ${productId} with variant cost $${variantCost} and handling fees $${calculatedHandlingFees}`);
-                } catch (error) {
-                  console.error(`Products API - Error updating main Product ${productId}:`, error);
-                }
+        // ✅ For force sync, also update main Product table with variant costs AND handling fees
+        console.log(`Products API - Updating main Product table for ${productsNeedingSync.length} products with variant costs and handling fees`);
+        for (const productId of productsNeedingSync) {
+          const shopifyProduct = shopifyProductsMap.get(productId);
+          if (shopifyProduct?.variants && shopifyProduct.variants.length > 0) {
+            const firstVariant = shopifyProduct.variants[0];
+            const variantCost = firstVariant?.costPerItem || pageCostData[productId];
+            const variantPrice = firstVariant?.price || 0;
+            
+            // ✅ Calculate handling fees for this product during page sync
+            const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, variantPrice);
+            
+            if (variantCost && variantCost > 0) {
+              try {
+                await prisma.product.upsert({
+                  where: { shopifyId: productId },
+                  update: { 
+                    costOfGoodsSold: variantCost,
+                    handlingFees: calculatedHandlingFees,
+                    costSource: 'SHOPIFY',
+                    price: variantPrice,
+                    sellingPrice: variantPrice,
+                    title: shopifyProduct.title
+                  },
+                  create: {
+                    shopifyId: productId,
+                    storeId: store.id,
+                    title: shopifyProduct.title || `Product ${productId}`,
+                    description: '',
+                    price: variantPrice,
+                    sellingPrice: variantPrice,
+                    cost: variantCost,
+                    costOfGoodsSold: variantCost,
+                    handlingFees: calculatedHandlingFees,
+                    costSource: 'SHOPIFY',
+                    sku: firstVariant?.sku || ''
+                  }
+                });
+                console.log(`Products API - Updated main Product ${productId} with variant cost $${variantCost} and handling fees $${calculatedHandlingFees}`);
+              } catch (error) {
+                console.error(`Products API - Error updating main Product ${productId}:`, error);
               }
             }
           }
@@ -947,7 +904,7 @@ export async function GET(request: NextRequest) {
           const shopifyProduct = shopifyProductsMap.get(product.id);
           product.lastSyncedAt = shopifyProduct?.lastSyncedAt instanceof Date ? shopifyProduct.lastSyncedAt.toISOString() : null;
           
-          // ✅ FIX: For SHOPIFY products, ensure we use FIRST variant cost for consistency with price
+          // ✅ For SHOPIFY products, ensure we use FIRST variant cost for consistency with price
           if (product.costSource === 'SHOPIFY') {
             // Try to get first variant cost from cached data first (more reliable ordering)
             let firstVariantCost = null;
@@ -960,21 +917,37 @@ export async function GET(request: NextRequest) {
             product.costOfGoodsSold = consistentCost;
             product.shopifyCostOfGoodsSold = consistentCost;
             
-            // ✅ NEW: If this product was just synced, get fresh handling fees from database
-            if (forceSync && productsNeedingSync.includes(product.id)) {
-              const freshProduct = await prisma.product.findUnique({
-                where: { shopifyId: product.id },
-                select: { handlingFees: true }
-              });
-              
-              if (freshProduct) {
-                product.handlingFees = freshProduct.handlingFees;
-                product.shopifyHandlingFees = freshProduct.handlingFees;
-                console.log(`💰 Updated handling fees for "${product.title}": $${freshProduct.handlingFees} (freshly calculated)`);
-              }
-            }
+                    // ✅ If this product was just synced, get fresh handling fees from database
+        if (productsNeedingSync.includes(product.id)) {
+          const freshProduct = await prisma.product.findUnique({
+            where: { shopifyId: product.id },
+            select: { handlingFees: true }
+          });
+          
+          if (freshProduct) {
+            product.handlingFees = freshProduct.handlingFees;
+            product.shopifyHandlingFees = freshProduct.handlingFees;
+            console.log(`💰 Updated handling fees for "${product.title}": $${freshProduct.handlingFees} (freshly calculated)`);
+          }
+        } else if (product.costSource === 'SHOPIFY' && product.handlingFees === 0) {
+          // ✅ NEW: Force recalculate handling fees for SHOPIFY products with $0 fees (likely from old logic)
+          const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, product.sellingPrice);
+          
+          if (calculatedHandlingFees > 0) {
+            // Update database with correct handling fees
+            await prisma.product.update({
+              where: { shopifyId: product.id },
+              data: { handlingFees: calculatedHandlingFees }
+            });
             
-            // ✅ FIX: Recalculate margin with correct costs including handling fees
+            // Update the product object for display
+            product.handlingFees = calculatedHandlingFees;
+            product.shopifyHandlingFees = calculatedHandlingFees;
+            console.log(`💰 Recalculated handling fees for "${product.title}": $${calculatedHandlingFees} (was $0, now using active costs only)`);
+          }
+        }
+            
+            // ✅ Recalculate margin with correct costs including handling fees
             const totalCost = product.costOfGoodsSold + product.handlingFees + product.miscFees;
             product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
             
@@ -984,6 +957,41 @@ export async function GET(request: NextRequest) {
       } else {
         console.log(`Products API - All ${pageProductIds.length} products already have fresh cost data`);
       }
+    } else if (!forceSync) {
+      console.log(`📊 Request [${requestId}] - Normal page load - skipping all sync operations for immediate response`);
+    }
+
+    // ✅ NEW: Force recalculation of handling fees if requested (useful when additional costs config changes)
+    console.log(`🔧 DEBUG: About to check forceHandlingFeesRecalc: ${forceHandlingFeesRecalc}`);
+    if (forceHandlingFeesRecalc) {
+      console.log(`💰 Force handling fees recalculation requested - updating ${paginatedProducts.length} products`);
+      
+      for (const product of paginatedProducts) {
+        if (product.costSource === 'SHOPIFY') {
+          const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(store.id, product.sellingPrice);
+          
+          // Update database
+          await prisma.product.update({
+            where: { shopifyId: product.id },
+            data: { handlingFees: calculatedHandlingFees }
+          });
+          
+          // Update product object for display
+          const oldFees = product.handlingFees;
+          product.handlingFees = calculatedHandlingFees;
+          product.shopifyHandlingFees = calculatedHandlingFees;
+          
+          console.log(`💰 Recalculated "${product.title}": $${oldFees} → $${calculatedHandlingFees}`);
+          
+          // ✅ Recalculate margin with updated handling fees
+          const totalCost = product.costOfGoodsSold + calculatedHandlingFees + product.miscFees;
+          product.margin = product.sellingPrice > 0 ? ((product.sellingPrice - totalCost) / product.sellingPrice) * 100 : 0;
+        }
+      }
+      
+      console.log(`💰 Completed handling fees recalculation for ${paginatedProducts.length} products`);
+    } else {
+      console.log(`🔧 DEBUG: forceHandlingFeesRecalc is false, skipping recalculation`);
     }
 
     console.log('Products API - Successfully transformed products')
