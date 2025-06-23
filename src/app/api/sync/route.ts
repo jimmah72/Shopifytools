@@ -53,11 +53,26 @@ export async function POST(request: NextRequest) {
         results = { orders: await syncShopifyOrders(targetStoreId, timeframeDays) }
         break
       case 'products':
-        results = { products: await syncShopifyProducts(targetStoreId) }
+        console.log('🎯 PRODUCTS SYNC INITIATED via API')
+        results = { products: await syncShopifyProducts(targetStoreId, { reason: triggerReason, source: triggerSource }) }
         break
       case 'all':
       default:
-        results = await syncAllData(targetStoreId, timeframeDays)
+        // ✅ OPTIMIZATION: For auto-sync triggers, skip products sync to prevent hanging
+        const isAutoSync = triggerReason === 'auto' || triggerSource === 'auto' || triggerReason?.includes('auto')
+        if (isAutoSync) {
+          console.log('⚡ Auto-sync detected - optimizing to orders-only to prevent hanging')
+          results = await syncAllData(targetStoreId, timeframeDays, { 
+            skipProductsSync: true, 
+            triggerReason: `${triggerReason} (auto-optimized)` 
+          })
+        } else {
+          console.log('🛍️ Manual sync - including full products sync')
+          results = await syncAllData(targetStoreId, timeframeDays, { 
+            skipProductsSync: false, 
+            triggerReason: triggerReason || 'manual' 
+          })
+        }
         break
     }
 
@@ -105,15 +120,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Get sync status for all data types
-    const syncStatuses = await prisma.syncStatus.findMany({
+    const syncStatuses = await (prisma as any).syncStatus.findMany({
       where: { storeId },
       orderBy: { lastSyncAt: 'desc' }
     })
 
     // Get total records in local storage
     const [orderCount, productCount] = await Promise.all([
-      prisma.shopifyOrder.count({ where: { storeId } }),
-      prisma.shopifyProduct.count({ where: { storeId } })
+      (prisma as any).shopifyOrder.count({ where: { storeId } }),
+      (prisma as any).shopifyProduct.count({ where: { storeId } })
     ])
 
     return NextResponse.json({
@@ -124,8 +139,8 @@ export async function GET(request: NextRequest) {
         products: productCount
       },
       lastSyncTimes: {
-        orders: syncStatuses.find(s => s.dataType === 'orders')?.lastSyncAt,
-        products: syncStatuses.find(s => s.dataType === 'products')?.lastSyncAt
+        orders: syncStatuses.find((s: any) => s.dataType === 'orders')?.lastSyncAt,
+        products: syncStatuses.find((s: any) => s.dataType === 'products')?.lastSyncAt
       }
     })
 

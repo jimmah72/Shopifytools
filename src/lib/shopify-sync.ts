@@ -456,7 +456,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
     }
 
     // Get or create sync status
-    let syncStatus = await prisma.syncStatus.findUnique({
+    let syncStatus = await (prisma as any).syncStatus.findUnique({
       where: {
         storeId_dataType: {
           storeId,
@@ -466,7 +466,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
     })
 
     if (!syncStatus) {
-      syncStatus = await prisma.syncStatus.create({
+      syncStatus = await (prisma as any).syncStatus.create({
         data: {
           storeId,
           dataType: 'products',
@@ -481,7 +481,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
       return result
     }
 
-    await prisma.syncStatus.update({
+    await (prisma as any).syncStatus.update({
       where: { id: syncStatus.id },
       data: { syncInProgress: true, errorMessage: null }
     })
@@ -509,7 +509,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
           }
 
           // Check if product exists
-          const existingProduct = await prisma.shopifyProduct.findUnique({
+          const existingProduct = await (prisma as any).shopifyProduct.findUnique({
             where: { id: productId }
           })
 
@@ -531,20 +531,20 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
           }
 
           if (existingProduct) {
-            await prisma.shopifyProduct.update({
+            await (prisma as any).shopifyProduct.update({
               where: { id: productId },
               data: productData
             })
             result.updatedOrders++
           } else {
-            await prisma.shopifyProduct.create({
+            await (prisma as any).shopifyProduct.create({
               data: productData
             })
             result.newOrders++
           }
 
           // Handle variants
-          await prisma.shopifyProductVariant.deleteMany({
+          await (prisma as any).shopifyProductVariant.deleteMany({
             where: { productId }
           })
 
@@ -583,15 +583,32 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
             })
 
             if (variantsData.length > 0) {
-              await prisma.shopifyProductVariant.createMany({
+              await (prisma as any).shopifyProductVariant.createMany({
                 data: variantsData
               })
             }
           }
 
-          // ✅ NEW: Update or create main Product record with calculated handling fees
+          // ✅ OPTIMIZED: Only calculate handling fees for new products or those without handling fees
           if (firstVariantPrice > 0) {
-            const calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(storeId, firstVariantPrice)
+            // Check if product already exists with handling fees
+            const existingProduct = await prisma.product.findUnique({
+              where: { shopifyId: productId },
+              select: { handlingFees: true, costSource: true }
+            });
+            
+            let calculatedHandlingFees = 0;
+            const needsHandlingFeesCalculation = !existingProduct || 
+                                               existingProduct.handlingFees === 0 || 
+                                               existingProduct.handlingFees === null;
+            
+            if (needsHandlingFeesCalculation) {
+              calculatedHandlingFees = await calculateHandlingFeesFromAdditionalCosts(storeId, firstVariantPrice);
+              console.log(`💰 Sync - Calculated handling fees for "${product.title}": $${calculatedHandlingFees} (price: $${firstVariantPrice})`);
+            } else {
+              calculatedHandlingFees = existingProduct.handlingFees;
+              console.log(`💰 Sync - Using existing handling fees for "${product.title}": $${calculatedHandlingFees} (skipped calculation)`);
+            }
             
             await prisma.product.upsert({
               where: { shopifyId: productId },
@@ -619,8 +636,6 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
                 lastEdited: new Date()
               }
             })
-            
-            console.log(`💰 Sync - Calculated handling fees for "${product.title}": $${calculatedHandlingFees} (price: $${firstVariantPrice})`)
           }
 
           result.ordersProcessed++
@@ -634,7 +649,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
     }
 
     // Update sync status
-    await prisma.syncStatus.update({
+    await (prisma as any).syncStatus.update({
       where: { id: syncStatus.id },
       data: {
         lastSyncAt: latestProductDate,
@@ -652,7 +667,7 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
     result.message = `Sync failed: ${error}`
     
     try {
-      await prisma.syncStatus.updateMany({
+      await (prisma as any).syncStatus.updateMany({
         where: { storeId, dataType: 'products' },
         data: { syncInProgress: false, errorMessage: `Sync failed: ${error}` }
       })
@@ -664,17 +679,26 @@ export async function syncShopifyProducts(storeId: string, triggerInfo?: { reaso
   return result
 }
 
-export async function syncAllData(storeId: string, timeframeDays: number = 30) {
-  console.log(`Sync Service - Starting full sync for store: ${storeId}`)
+export async function syncAllData(storeId: string, timeframeDays: number = 30, options?: { skipProductsSync?: boolean, triggerReason?: string }) {
+  console.log(`Sync Service - Starting ${options?.skipProductsSync ? 'orders-only' : 'full'} sync for store: ${storeId}`)
+  console.log(`Sync Service - Trigger reason: ${options?.triggerReason || 'manual'}`)
   
-  const results = {
+  const results: any = {
     orders: await syncShopifyOrders(storeId, timeframeDays),
-    products: await syncShopifyProducts(storeId)
   }
   
-  console.log('Sync Service - Full sync completed:', {
+  // ✅ OPTIMIZATION: Skip products sync for auto-detected new orders (prevents hanging)
+  if (!options?.skipProductsSync) {
+    console.log('🛍️ Including products sync in full sync...')
+    results.products = await syncShopifyProducts(storeId, { reason: options?.triggerReason || 'manual', source: 'full_sync' })
+  } else {
+    console.log('⚡ Skipping products sync (auto-optimization for new orders only)')
+    results.products = { success: true, ordersProcessed: 0, newOrders: 0, updatedOrders: 0, message: 'Skipped for auto-sync efficiency' }
+  }
+  
+  console.log('Sync Service - Sync completed:', {
     orders: `${results.orders.newOrders} new, ${results.orders.updatedOrders} updated`,
-    products: `${results.products.newOrders} new, ${results.products.updatedOrders} updated`
+    products: options?.skipProductsSync ? 'skipped' : `${results.products.newOrders} new, ${results.products.updatedOrders} updated`
   })
   
   return results
