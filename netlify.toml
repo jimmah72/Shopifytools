@@ -8,3 +8,15 @@
 [build.environment]
   NEXT_USE_NETLIFY_EDGE = "true"
   NEXT_PRIVATE_TARGET = "server"
+
+# Ensure API routes are handled correctly
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/nextjs"
+  status = 200
+
+# Handle all other routes through Next.js
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
