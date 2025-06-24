@@ -42,6 +42,9 @@ interface DashboardMetrics {
   itemsWithCostData?: number;
   totalLineItems?: number;
   cogCoveragePercent?: number;
+  // Ad spend metadata
+  adSpendPlatforms?: string[];
+  adSpendCampaigns?: number;
   recentOrders: Array<{
     id: string;
     orderNumber: string;
@@ -187,6 +190,28 @@ export async function GET(request: NextRequest) {
         }
       })
     ]);
+
+    // ✅ NEW: Get actual ad spend data for the timeframe
+    console.log('Dashboard API - Fetching ad spend data for timeframe...');
+    const adSpendData = await prisma.adSpend.findMany({
+      where: {
+        storeId: store.id,
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      }
+    });
+
+    const totalAdSpend = adSpendData.reduce((sum, record) => sum + record.amount, 0);
+    const adSpendPlatforms = [...new Set(adSpendData.map(record => record.platform))];
+    const adSpendCampaigns = [...new Set(adSpendData.map((record: any) => record.campaign).filter(Boolean))].length;
+
+    console.log(`Dashboard API - Ad spend calculation:`);
+    console.log(`   💰 Total ad spend: $${totalAdSpend.toFixed(2)}`);
+    console.log(`   📱 Platforms: ${adSpendPlatforms.join(', ') || 'none'}`);
+    console.log(`   📊 Campaigns: ${adSpendCampaigns}`);
+    console.log(`   📅 Records found: ${adSpendData.length}`);
 
     // Get metrics from local database (MUCH faster!)
     const [orderMetrics, productCount, totalItemsData, recentOrdersData, syncStatus] = await Promise.all([
@@ -383,8 +408,7 @@ export async function GET(request: NextRequest) {
       dataSource: actualCOG > 0 ? 'local_database_actual_costs' : 'estimated_cog_rate'
     });
 
-    // Calculate financial metrics using configured rates
-    const adSpend = 0 // TODO: Integrate with ad platforms  
+    // Calculate financial metrics using configured rates and ACTUAL ad spend
     const estimatedGatewayFees = totalRevenue * feeConfig.paymentGatewayRate
     const estimatedProcessingFees = totalOrders * feeConfig.processingFeePerOrder
     
@@ -412,11 +436,11 @@ export async function GET(request: NextRequest) {
     const estimatedChargebacks = totalRevenue * feeConfig.chargebackRate
     const netRevenue = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees
     
-    // ✅ FIXED: Calculate net profit showing all deductions clearly (including shipping costs)
-    const netProfit = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees - finalCOG - additionalCosts - subscriptionCosts - actualShippingCosts
+    // ✅ FIXED: Calculate net profit including ad spend in deductions
+    const netProfit = totalRevenue - totalRefunds - estimatedGatewayFees - estimatedProcessingFees - finalCOG - additionalCosts - subscriptionCosts - actualShippingCosts - totalAdSpend
 
     // Log detailed net revenue calculations
-    console.log('=== NET REVENUE CALCULATION (Using Configured Rates + Dynamic Costs) ===')
+    console.log('=== NET REVENUE CALCULATION (Using Configured Rates + Dynamic Costs + Ad Spend) ===')
     console.log(`📊 Total Revenue: $${totalRevenue.toFixed(2)}`)
     console.log(`📊 Total Orders: ${totalOrders}`)
     console.log(`📊 Total Items: ${totalItems}`)
@@ -442,6 +466,11 @@ export async function GET(request: NextRequest) {
       const feeCost = fee.dailyRate * timeframeDays;
       console.log(`     - ${fee.name}: $${feeCost.toFixed(2)} (${fee.billingType}: $${fee.dailyRate.toFixed(2)}/day × ${timeframeDays} days)`)
     });
+    console.log(`   📱 Ad Spend (${adSpendPlatforms.length} platforms): $${totalAdSpend.toFixed(2)}`)
+    adSpendPlatforms.forEach(platform => {
+      const platformSpend = adSpendData.filter(record => record.platform === platform).reduce((sum, record) => sum + record.amount, 0);
+      console.log(`     - ${platform}: $${platformSpend.toFixed(2)}`)
+    });
     console.log(``)
     console.log(`🔻 DEDUCTIONS:`)
     console.log(`   💸 Total Refunds (actual): $${totalRefunds.toFixed(2)}`)
@@ -451,12 +480,17 @@ export async function GET(request: NextRequest) {
     console.log(`🧮 CALCULATION:`)
     console.log(`   Net Revenue = $${totalRevenue.toFixed(2)} - $${totalRefunds.toFixed(2)} - $${estimatedGatewayFees.toFixed(2)} - $${estimatedProcessingFees.toFixed(2)}`)
     console.log(`   Net Revenue = $${netRevenue.toFixed(2)}`)
+    console.log(`   Net Profit = Net Revenue - COG - Additional Costs - Subscription Costs - Shipping - Ad Spend`)
+    console.log(`   Net Profit = $${netRevenue.toFixed(2)} - $${finalCOG.toFixed(2)} - $${additionalCosts.toFixed(2)} - $${subscriptionCosts.toFixed(2)} - $${actualShippingCosts.toFixed(2)} - $${totalAdSpend.toFixed(2)}`)
+    console.log(`   Net Profit = $${netProfit.toFixed(2)}`)
     console.log(``)
     console.log(`📈 SUMMARY:`)
     console.log(`   💚 Net Revenue: $${netRevenue.toFixed(2)}`)
+    console.log(`   💰 Net Profit: $${netProfit.toFixed(2)}`)
     console.log(`   📉 Total Fees & Refunds: $${(totalRefunds + estimatedGatewayFees + estimatedProcessingFees).toFixed(2)}`)
     console.log(`   📊 Net Margin: ${((netRevenue / totalRevenue) * 100).toFixed(2)}%`)
-          console.log(`   📦 ${actualCOG > 0 ? 'Actual' : 'Estimated'} COG: $${finalCOG.toFixed(2)} ${actualCOG > 0 ? '(from local database)' : `(${(feeConfig.defaultCogRate * 100).toFixed(1)}% estimate)`}`)
+    console.log(`   🎯 Profit Margin: ${totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(2) : 0}%`)
+    console.log(`   📦 ${actualCOG > 0 ? 'Actual' : 'Estimated'} COG: $${finalCOG.toFixed(2)} ${actualCOG > 0 ? '(from local database)' : `(${(feeConfig.defaultCogRate * 100).toFixed(1)}% estimate)`}`)
     console.log(`   🏗️  Additional Costs: $${additionalCosts.toFixed(2)}`)
     console.log(`   💼 Subscription Costs: $${subscriptionCosts.toFixed(2)}`)
     console.log(`   🚚 Shipping Costs: $${actualShippingCosts.toFixed(2)} (${
@@ -465,13 +499,14 @@ export async function GET(request: NextRequest) {
       shippingCalculationMethod === 'none' ? 'no data available' :
       'error fetching data'
     })`)
+    console.log(`   📱 Ad Spend: $${totalAdSpend.toFixed(2)} (${adSpendData.length} records from ${adSpendPlatforms.length} platforms)`)
     console.log(`   📋 Fulfillment Filter: ${fulfillmentStatus}`)
     console.log(`   🎟️  Total Discounts (not deducted): $${totalDiscounts.toFixed(2)}`)
     console.log('========================================================')
 
-    // Calculate ROAS and POAS (require ad spend data)
-    const roas = adSpend > 0 ? totalRevenue / adSpend : 0
-    const poas = adSpend > 0 ? (totalRevenue - estimatedCOG - estimatedGatewayFees - estimatedProcessingFees) / adSpend : 0
+    // Calculate ROAS and POAS (now with actual ad spend data)
+    const roas = totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0
+    const poas = totalAdSpend > 0 ? netProfit / totalAdSpend : 0
 
     // Format recent orders
     const recentOrders = recentOrdersData.map((order: any) => ({
@@ -493,37 +528,40 @@ export async function GET(request: NextRequest) {
       averageOrderValue,
       totalShippingRevenue,
       totalTaxes,
-      // New financial fields
-      adSpend,
+      // Updated financial fields with actual ad spend
+      adSpend: totalAdSpend,
       roas,
       poas,
       cog: finalCOG,
       fees: estimatedGatewayFees + estimatedProcessingFees,
-      overheadCosts, // DEPRECATED - now always 0
-      shippingCosts: actualShippingCosts, // ✅ NEW: Actual shipping costs from second database
-      miscCosts, // DEPRECATED - now always 0
-      additionalCosts, // NEW: Dynamic additional costs
-      subscriptionCosts, // NEW: Daily subscription costs for timeframe
-      totalRefunds,  // NOW USING ACTUAL REFUNDS
-      chargebacks: estimatedChargebacks, // NOW USING CONFIGURED RATE
+      overheadCosts,
+      shippingCosts: actualShippingCosts,
+      miscCosts,
+      additionalCosts,
+      subscriptionCosts,
+      totalRefunds,
+      chargebacks: estimatedChargebacks,
       paymentGatewayFees: estimatedGatewayFees,
       processingFees: estimatedProcessingFees,
       netRevenue,
-      netProfit,  // NEW: Net profit after all costs
-      totalDiscounts,  // NEW: Include discounts in response
-      recentOrders,
-      dataSource: 'local_database',
-      lastSyncTime: syncStatus?.lastSyncAt?.toISOString(),
-      // Shipping calculation metadata
+      netProfit,
+      totalDiscounts,
+      // Shipping metadata
       shippingCalculationMethod,
       shippingCoverage: shippingCostsCoverage,
       averageShippingCost,
       ordersWithShippingData,
       ordersMissingShippingData,
-      // COG calculation metadata
+      // COG metadata
       itemsWithCostData: itemsWithCosts,
       totalLineItems,
-      cogCoveragePercent
+      cogCoveragePercent,
+      // Ad spend metadata  
+      adSpendPlatforms,
+      adSpendCampaigns,
+      recentOrders,
+      dataSource: 'local_database',
+      lastSyncTime: syncStatus?.lastSyncAt?.toISOString()
     }
 
     console.log('Dashboard API - Local metrics calculated:', {
@@ -531,15 +569,20 @@ export async function GET(request: NextRequest) {
       totalRevenue,
       totalProducts: productCount,
       averageOrderValue,
+      adSpend: totalAdSpend,
+      roas: roas.toFixed(2),
+      poas: poas.toFixed(2),
+      netProfit,
       dataSource: 'local_database',
       lastSyncTime: syncStatus?.lastSyncAt?.toISOString()
     })
 
     return NextResponse.json(metrics)
+
   } catch (error) {
-    console.error('Dashboard API - Error:', error)
+    console.error('Dashboard API Error:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch dashboard metrics' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

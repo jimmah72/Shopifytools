@@ -185,7 +185,7 @@ export default function AdSpendUploadPage() {
         <UploadCard
           platform="google_ads"
           title="Google Ads"
-          description="Upload your Google Ads performance report CSV. Include columns for Date, Campaign, Cost/Spend."
+          description="Upload your Google Ads performance report CSV. Include columns for Day, Campaign, Cost."
           color="#4285F4"
         />
         
@@ -209,9 +209,9 @@ export default function AdSpendUploadPage() {
               Required Columns:
             </Typography>
             <Typography variant="body2" component="div">
-              • <strong>Date</strong> (YYYY-MM-DD format)<br/>
-              • <strong>Campaign</strong> or <strong>Campaign name</strong><br/>
-              • <strong>Cost</strong> or <strong>Spend</strong> (numeric value)
+              • <strong>Day</strong> (date format)<br/>
+              • <strong>Campaign</strong><br/>
+              • <strong>Cost</strong> (numeric value)
             </Typography>
           </Box>
           
