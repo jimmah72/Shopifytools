@@ -1,0 +1,103 @@
+{
+  "name": "FINAL WORKING TEST",
+  "nodes": [
+    {
+      "parameters": {
+        "functionCode": "return [{\n  json: {\n    apiKey: 'shopify-tools-webhook-2025',\n    storeDomain: '25898e.myshopify.com',\n    platform: 'google_ads',\n    spend: 25.5,\n    date: '2025-06-23',\n    campaignName: 'Test Campaign'\n  }\n}];"
+      },
+      "id": "f1",
+      "name": "Function",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://shopifytoolsprofit.netlify.app/api/ad-spend/webhook",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{$json.apiKey}}"
+            },
+            {
+              "name": "storeDomain", 
+              "value": "={{$json.storeDomain}}"
+            },
+            {
+              "name": "platform",
+              "value": "={{$json.platform}}"
+            },
+            {
+              "name": "spend",
+              "value": "={{$json.spend}}"
+            },
+            {
+              "name": "date",
+              "value": "={{$json.date}}"
+            },
+            {
+              "name": "campaignName",
+              "value": "={{$json.campaignName}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "h1",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {},
+      "id": "m1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 240]
+    }
+  ],
+  "connections": {
+    "Function": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Function",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "FINAL-WORKING",
+  "id": "FINAL-WORKING",
+  "tags": []
+} 

@@ -1,0 +1,78 @@
+{
+  "name": "Google Ads Test - FIXED",
+  "nodes": [
+    {
+      "parameters": {
+        "functionCode": "return [{\n  json: {\n    apiKey: 'shopify-tools-webhook-2025',\n    storeDomain: '25898e.myshopify.com',\n    platform: 'google_ads',\n    spend: 25.5,\n    date: '2025-06-23',\n    campaignName: 'Test Campaign'\n  }\n}];"
+      },
+      "id": "1",
+      "name": "Function",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://shopifytoolsprofit.netlify.app/api/ad-spend/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{$json}}",
+        "options": {}
+      },
+      "id": "2", 
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {
+        "functionCode": "console.log('Manual trigger executed');\nreturn items;"
+      },
+      "id": "3",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 240]
+    }
+  ],
+  "connections": {
+    "Function": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Function",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "FIXED-VERSION",
+  "id": "FIXED",
+  "tags": []
+} 

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 // Mark route as dynamic
 export const dynamic = 'force-dynamic'
 export const fetchCache = 'force-no-store'
+export const runtime = 'nodejs'
 
 // Expected webhook data structure
 interface AdSpendWebhookData {
@@ -80,6 +81,7 @@ function calculateMetrics(data: AdSpendWebhookData) {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('Webhook called at:', new Date().toISOString())
     const data: AdSpendWebhookData = await request.json()
     
     console.log('🔗 Ad Spend Webhook received data:', {
@@ -142,15 +144,16 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // 5. Prepare data for database (using actual database fields)
+    // 5. Prepare data for database (using actual database schema)
     const adSpendData = {
       storeId: store.id,
       platform: data.platform,
-      accountId: data.accountId || 'default-account', // Required field in database
-      campaignId: data.campaignId || null,
-      amount: data.spend, // Database uses 'amount' not 'spend'
+      amount: data.spend,
       date: parsedDate,
-      lastSync: new Date() // Required field in database
+      campaign: data.campaignName || data.campaignId || null,
+      description: `${data.platform} ad spend - ${data.campaignName || 'campaign'}`,
+      accountId: data.accountId || `${data.platform}_default`,
+      lastSync: new Date()
     }
     
     // 6. Create ad spend record (simple create since no unique constraint exists)
@@ -161,8 +164,7 @@ export async function POST(request: NextRequest) {
     console.log('✅ Ad spend data saved:', {
       id: adSpend.id,
       platform: adSpend.platform,
-      amount: adSpend.amount,
-      campaignId: adSpend.campaignId
+      amount: adSpend.amount
     })
     
     // 7. Return success response
@@ -173,8 +175,7 @@ export async function POST(request: NextRequest) {
         id: adSpend.id,
         platform: adSpend.platform,
         amount: adSpend.amount,
-        date: adSpend.date.toISOString().split('T')[0],
-        campaignId: adSpend.campaignId
+        date: adSpend.date.toISOString().split('T')[0]
       }
     })
     

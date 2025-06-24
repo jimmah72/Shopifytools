@@ -22,7 +22,7 @@ const nextConfig = {
     SHOPIFY_STOREFRONT_ACCESS_TOKEN: process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN || 'your-storefront-access-token',
   },
   // Configure for Netlify deployment
-  output: 'standalone',
+  // Remove standalone for Netlify - let the plugin handle it
   sassOptions: {
     includePaths: ['./src/styles'],
   },

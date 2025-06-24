@@ -479,17 +479,17 @@ export class AdSpendService {
 
       // Save to database using actual database fields
       for (const adSpend of allAdSpendData) {
-        await prisma.adSpend.create({
+        // Transform to match database schema
+        const dbRecord = await prisma.adSpend.create({
           data: {
             storeId,
             platform: adSpend.platform,
-            campaignId: adSpend.campaignId,
-            accountId: 'api-sync', // Required field
+            campaign: adSpend.campaignId || adSpend.campaignName,
             amount: adSpend.spend, // Database uses 'amount' not 'spend'
             date: new Date(adSpend.date),
-            lastSync: new Date() // Required field
+            description: `${adSpend.platform} campaign: ${adSpend.campaignId || adSpend.campaignName || 'unknown'}`
           }
-        })
+        });
       }
 
       // Update sync timestamps (removed errorMessage field reference)
