@@ -1,0 +1,232 @@
+{
+  "name": "Gmail Google Ads CSV to Webhook - BULLETPROOF",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "sender": [
+            {
+              "email": "noreply-datalayer@google.com"
+            }
+          ],
+          "subject": "Your Google Ads report is ready"
+        },
+        "format": "resolved",
+        "download": true,
+        "dataPropertyAttachmentsPrefixName": "attachment_",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7890-abcd-ef1234567890",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail OAuth2 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition1",
+              "leftValue": "={{ $json.attachments }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2b3c4d5e-6f78-9012-bcde-f23456789012",
+      "name": "Check for Attachments",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gmail Google Ads CSV to Ad Spend Webhook Processor\n// This function processes CSV attachments from Google Ads reports\n\nconst items = $input.all();\nconst processedData = [];\n\nfor (const item of items) {\n  console.log('Processing item:', JSON.stringify(item, null, 2));\n  \n  // Check if we have attachments\n  if (!item.json.attachments || item.json.attachments.length === 0) {\n    console.log('No attachments found');\n    continue;\n  }\n  \n  // Process each attachment\n  for (const attachment of item.json.attachments) {\n    console.log('Processing attachment:', attachment.name);\n    \n    // Only process CSV files\n    if (!attachment.name.toLowerCase().includes('.csv')) {\n      console.log('Skipping non-CSV attachment:', attachment.name);\n      continue;\n    }\n    \n    // Get the CSV content\n    let csvContent = '';\n    \n    // Handle different attachment formats\n    if (attachment.content) {\n      // If content is base64 encoded\n      if (typeof attachment.content === 'string') {\n        try {\n          csvContent = Buffer.from(attachment.content, 'base64').toString('utf8');\n        } catch (e) {\n          csvContent = attachment.content;\n        }\n      }\n    } else if (item.binary && item.binary[`attachment_${attachment.name}`]) {\n      // If attachment is in binary data\n      const binaryData = item.binary[`attachment_${attachment.name}`];\n      csvContent = Buffer.from(binaryData.data, 'base64').toString('utf8');\n    }\n    \n    if (!csvContent) {\n      console.log('No CSV content found for:', attachment.name);\n      continue;\n    }\n    \n    console.log('CSV Content preview:', csvContent.substring(0, 500));\n    \n    // Parse CSV content\n    const lines = csvContent.split('\\n').filter(line => line.trim());\n    \n    if (lines.length < 2) {\n      console.log('CSV has insufficient data');\n      continue;\n    }\n    \n    // Get headers (first line)\n    const headers = lines[0].split(',').map(h => h.trim().replace(/\"/g, ''));\n    console.log('CSV Headers:', headers);\n    \n    // Find relevant column indices\n    const dateIndex = headers.findIndex(h => \n      h.toLowerCase().includes('date') || \n      h.toLowerCase().includes('day')\n    );\n    \n    const spendIndex = headers.findIndex(h => \n      h.toLowerCase().includes('cost') || \n      h.toLowerCase().includes('spend') || \n      h.toLowerCase().includes('amount')\n    );\n    \n    const campaignIndex = headers.findIndex(h => \n      h.toLowerCase().includes('campaign')\n    );\n    \n    console.log('Column indices - Date:', dateIndex, 'Spend:', spendIndex, 'Campaign:', campaignIndex);\n    \n    if (dateIndex === -1 || spendIndex === -1) {\n      console.log('Required columns not found in CSV');\n      continue;\n    }\n    \n    // Process data rows (skip header)\n    for (let i = 1; i < lines.length; i++) {\n      const row = lines[i].split(',').map(cell => cell.trim().replace(/\"/g, ''));\n      \n      if (row.length < Math.max(dateIndex, spendIndex) + 1) {\n        console.log('Row has insufficient columns:', row);\n        continue;\n      }\n      \n      const rawDate = row[dateIndex];\n      const rawSpend = row[spendIndex];\n      const rawCampaign = campaignIndex >= 0 ? row[campaignIndex] : 'Unknown Campaign';\n      \n      // Parse spend amount (remove currency symbols and convert to number)\n      const spendStr = rawSpend.replace(/[$,£€]/g, '').trim();\n      const spend = parseFloat(spendStr);\n      \n      if (isNaN(spend) || spend <= 0) {\n        console.log('Invalid spend amount:', rawSpend);\n        continue;\n      }\n      \n      // Parse date (handle various formats)\n      let formattedDate = '';\n      try {\n        const dateObj = new Date(rawDate);\n        if (!isNaN(dateObj.getTime())) {\n          formattedDate = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD\n        } else {\n          console.log('Invalid date format:', rawDate);\n          continue;\n        }\n      } catch (e) {\n        console.log('Date parsing error:', e.message);\n        continue;\n      }\n      \n      // Create webhook payload\n      const webhookData = {\n        apiKey: 'shopify-tools-webhook-2025',\n        storeDomain: '25898e.myshopify.com',\n        platform: 'google_ads',\n        spend: spend,\n        date: formattedDate,\n        campaignName: rawCampaign,\n        accountId: 'google_ads_gmail_import',\n        // Additional metadata\n        source: 'gmail_csv_import',\n        fileName: attachment.name,\n        importedAt: new Date().toISOString()\n      };\n      \n      console.log('Created webhook payload:', JSON.stringify(webhookData, null, 2));\n      processedData.push(webhookData);\n    }\n  }\n}\n\nconsole.log(`Processed ${processedData.length} ad spend records`);\n\nif (processedData.length === 0) {\n  throw new Error('No valid ad spend data found in CSV attachments');\n}\n\nreturn processedData.map(data => ({ json: data }));"
+      },
+      "id": "3c4d5e6f-7890-1234-cdef-456789012345",
+      "name": "Process CSV Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://shopifytoolsprofit.netlify.app/api/ad-spend/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "n8n-webhook/1.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxAttempts": 3,
+            "waitBetweenAttempts": 1000
+          }
+        }
+      },
+      "id": "4d5e6f78-9012-3456-def0-56789012345a",
+      "name": "Send to Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Success logging and summary\nconst items = $input.all();\nconst successCount = items.filter(item => \n  item.json.statusCode === 200 || \n  (item.json.success === true)\n).length;\n\nconst totalRecords = items.length;\nconst errorCount = totalRecords - successCount;\n\nconsole.log(`\\n=== AD SPEND IMPORT SUMMARY ===`);\nconsole.log(`Total records processed: ${totalRecords}`);\nconsole.log(`Successful imports: ${successCount}`);\nconsole.log(`Failed imports: ${errorCount}`);\nconsole.log(`Success rate: ${((successCount/totalRecords)*100).toFixed(1)}%`);\nconsole.log(`Import completed at: ${new Date().toISOString()}`);\nconsole.log(`================================\\n`);\n\n// Return summary data\nreturn [{\n  json: {\n    summary: {\n      totalRecords,\n      successCount,\n      errorCount,\n      successRate: ((successCount/totalRecords)*100).toFixed(1) + '%',\n      completedAt: new Date().toISOString(),\n      status: errorCount === 0 ? 'SUCCESS' : 'PARTIAL_SUCCESS'\n    }\n  }\n}];"
+      },
+      "id": "5e6f7890-1234-5678-ef01-6789012345ab",
+      "name": "Log Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handling and logging\nconst error = $input.first();\n\nconsole.error('\\n=== AD SPEND IMPORT ERROR ===');\nconsole.error('Error occurred at:', new Date().toISOString());\nconsole.error('Error details:', JSON.stringify(error, null, 2));\nconsole.error('=============================\\n');\n\n// Return error information\nreturn [{\n  json: {\n    error: true,\n    message: 'Ad spend import failed',\n    details: error,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "6f789012-3456-7890-f012-789012345abc",
+      "name": "Handle Errors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check for Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Attachments": {
+      "main": [
+        [
+          {
+            "node": "Process CSV Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process CSV Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-25T00:00:00.000Z",
+      "updatedAt": "2025-01-25T00:00:00.000Z",
+      "id": "tag1",
+      "name": "google-ads"
+    },
+    {
+      "createdAt": "2025-01-25T00:00:00.000Z",
+      "updatedAt": "2025-01-25T00:00:00.000Z",
+      "id": "tag2",
+      "name": "ad-spend"
+    },
+    {
+      "createdAt": "2025-01-25T00:00:00.000Z",
+      "updatedAt": "2025-01-25T00:00:00.000Z",
+      "id": "tag3",
+      "name": "webhook"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-25T00:00:00.000Z",
+  "versionId": "1"
+} 
