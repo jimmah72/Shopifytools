@@ -32,11 +32,12 @@ export default function AdSpendUploadPage() {
 
       const result: UploadResult = await response.json()
       setResults(result)
-    } catch (error) {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err) || 'Unknown error'
       setResults({
         success: false,
         message: 'Failed to upload file',
-        errors: [error instanceof Error ? error.message : 'Unknown error']
+        errors: [errorMessage]
       })
     } finally {
       setUploading(false)
